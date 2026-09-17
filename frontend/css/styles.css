@@ -1,0 +1,267 @@
+/*
+  Design plan
+  -----------
+  Subject: a mission-ops health dashboard for a spaceflight crew, viewed by
+  a crew medical officer or flight surgeon. This is instrumentation, not a
+  marketing surface — the aesthetic borrows from mission-control telemetry
+  (dense readouts, monospace figures, status dots) rather than a generic
+  SaaS card kit.
+
+  Color: continues the RofehAI brand established earlier (deep navy +
+  coral pulse) rather than the generic near-black-plus-neon default.
+    --bg:        #0A1020  deep navy void
+    --surface:   #121A2E  panel background
+    --surface-2: #1A2440  raised panel / hover
+    --border:    #263257
+    --text-1:    #E8ECF6  primary text
+    --text-2:    #8C9AC2  secondary text
+    --accent:    #4C8DFF  interactive / brand blue
+    --status nominal / elevated / critical: teal / amber / coral
+
+  Type: Inter (or system-ui) for body and labels; a monospace face for all
+  telemetry-style figures (risk %, mission day, confidence) — justified
+  here because these genuinely are instrument readouts, not decoration.
+
+  Layout: fixed top bar (brand + mission clock + system status), left
+  roster sidebar, main detail panel. Left-aligned throughout; this is a
+  working tool, not a hero-led marketing page.
+*/
+
+:root {
+  --bg: #0A1020;
+  --surface: #121A2E;
+  --surface-2: #1A2440;
+  --border: #263257;
+  --text-1: #E8ECF6;
+  --text-2: #8C9AC2;
+  --text-3: #5C6890;
+  --accent: #4C8DFF;
+  --status-nominal: #2FBF8F;
+  --status-elevated: #E0A23D;
+  --status-critical: #E5615C;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+
+  --radius: 6px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text-1);
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 14px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark { width: 34px; height: 34px; flex-shrink: 0; }
+.brand-name { font-weight: 600; font-size: 17px; letter-spacing: 0.2px; }
+.brand-tag { font-size: 11px; color: var(--text-3); }
+
+.topbar-mission { margin-left: 12px; }
+.mission-name { font-size: 13px; color: var(--text-2); }
+.mission-day {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-1);
+  letter-spacing: 0.5px;
+}
+.mission-day span { color: var(--accent); font-weight: 600; }
+
+.topbar-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block;
+}
+.status-dot--nominal { background: var(--status-nominal); }
+.status-dot--elevated { background: var(--status-elevated); }
+.status-dot--critical { background: var(--status-critical); }
+
+/* ---------- Body layout ---------- */
+
+.body { display: flex; flex: 1; min-height: 0; }
+
+.roster {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 16px 0;
+  overflow-y: auto;
+}
+
+.roster-heading {
+  padding: 0 20px 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.roster-list { list-style: none; margin: 0; padding: 0; }
+
+.roster-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.roster-item:hover { background: var(--surface-2); }
+.roster-item.is-active {
+  background: var(--surface-2);
+  border-left-color: var(--accent);
+}
+.roster-item-name { font-size: 14px; }
+.roster-item-day { margin-left: auto; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+
+/* ---------- Detail panel ---------- */
+
+.detail {
+  flex: 1;
+  padding: 24px 32px;
+  overflow-y: auto;
+}
+
+.empty-state {
+  color: var(--text-3);
+  font-size: 14px;
+  padding-top: 40px;
+  text-align: center;
+}
+
+.detail-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.detail-heading h1 { font-size: 20px; font-weight: 600; margin: 0; }
+.detail-heading .subtitle { color: var(--text-2); font-size: 13px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+.panel-title {
+  font-size: 12px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.risk-row {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  margin-bottom: 6px;
+}
+.risk-figure {
+  font-family: var(--font-mono);
+  font-size: 30px;
+  font-weight: 600;
+}
+.risk-delta { font-family: var(--font-mono); font-size: 14px; }
+.risk-delta.is-up { color: var(--status-critical); }
+.risk-delta.is-down { color: var(--status-nominal); }
+.risk-confidence { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); margin-top: 4px; }
+
+.narrative {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.6;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.contributors { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.contributor-chip {
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.chart-panel { grid-column: 1 / -1; }
+.chart-wrap { height: 220px; }
+
+.countermeasure-panel { grid-column: 1 / -1; }
+.cm-name { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.cm-desc { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+.cm-rationale { font-size: 12px; color: var(--text-3); margin-bottom: 12px; }
+.cm-none { font-size: 13px; color: var(--text-3); }
+
+.btn {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.is-primary { background: var(--accent); border-color: var(--accent); color: #0A1020; font-weight: 600; }
+
+.footer {
+  padding: 10px 24px;
+  font-size: 11px;
+  color: var(--text-3);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+@media (max-width: 780px) {
+  .body { flex-direction: column; }
+  .roster { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+  .grid { grid-template-columns: 1fr; }
+}

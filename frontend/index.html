@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RofehAI — Mission Health Dashboard</title>
+<link rel="stylesheet" href="css/styles.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app">
+
+    <header class="topbar">
+      <div class="topbar-brand">
+        <svg class="brand-mark" viewBox="0 0 80 80" aria-hidden="true">
+          <circle cx="40" cy="40" r="34" fill="none" stroke="var(--accent)" stroke-width="2"/>
+          <ellipse cx="40" cy="40" rx="34" ry="12" fill="none" stroke="var(--accent)" stroke-width="1" transform="rotate(-20 40 40)"/>
+          <circle cx="66" cy="26" r="3" fill="var(--accent)"/>
+          <path d="M12 40 L27 40 L34 22 L43 58 L50 40 L68 40" fill="none" stroke="var(--status-critical)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div>
+          <div class="brand-name">RofehAI</div>
+          <div class="brand-tag">your physician, everywhere</div>
+        </div>
+      </div>
+      <div class="topbar-mission">
+        <div class="mission-name" id="mission-name">—</div>
+        <div class="mission-day">MISSION DAY <span id="mission-day-value">—</span></div>
+      </div>
+      <div class="topbar-status" id="system-status">
+        <span class="status-dot status-dot--nominal"></span> demo data — synthetic
+      </div>
+    </header>
+
+    <div class="body">
+      <aside class="roster" aria-label="Crew roster">
+        <div class="roster-heading">Crew</div>
+        <ul class="roster-list" id="roster-list"><!-- populated by app.js --></ul>
+      </aside>
+
+      <main class="detail" id="detail-panel">
+        <div class="empty-state">Select a crew member to view their risk trajectory.</div>
+      </main>
+    </div>
+
+    <footer class="footer">
+      RofehAI reference implementation &middot; running on synthetic demo data &middot;
+      decision-support output only — not a diagnosis, human review required
+    </footer>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

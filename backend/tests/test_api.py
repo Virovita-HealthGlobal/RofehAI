@@ -1,0 +1,69 @@
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+client = TestClient(app)
+
+
+def test_health():
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_list_crew():
+    r = client.get("/api/crew")
+    assert r.status_code == 200
+    assert len(r.json()) == 4
+
+
+def test_risk_for_high_susceptibility_crew_member():
+    # crew-01 has high SANS susceptibility in the synthetic profile
+    r = client.get("/api/crew/crew-01/risk/sans", params={"mission_day": 180})
+    assert r.status_code == 200
+    body = r.json()
+    assert 0 <= body["current_risk"] <= 1
+    assert 0 <= body["confidence"] <= 1
+
+
+def test_fallback_when_insufficient_data():
+    r = client.get("/api/crew/crew-01/risk/sans", params={"mission_day": 3})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["is_fallback"] is True
+
+
+def test_countermeasure_log_roundtrip():
+    entry = {"crew_id": "crew-01", "countermeasure_id": "lbnp-protocol", "mission_day": 120}
+    r = client.post("/api/countermeasures/log", json=entry)
+    assert r.status_code == 200
+    assert r.json()["logged"] is True
+    r2 = client.get("/api/countermeasures/log", params={"crew_id": "crew-01"})
+    assert any(e["crew_id"] == "crew-01" for e in r2.json())
+
+
+def test_observation_validation_rejects_out_of_range_values():
+    bad_obs = {"crew_id": "crew-01", "mission_day": 50, "onsd_mm": 999.0}
+    r = client.post("/api/observations", json=bad_obs)
+    assert r.status_code == 422
+
+
+def test_observation_rejects_unknown_crew_id():
+    obs = {"crew_id": "not-a-real-crew-member", "mission_day": 50, "onsd_mm": 5.0}
+    r = client.post("/api/observations", json=obs)
+    assert r.status_code == 404
+
+
+def test_api_key_enforced_when_configured(monkeypatch):
+    monkeypatch.setenv("ROFEHAI_API_KEY", "test-secret")
+    try:
+        r_no_key = client.get("/api/crew")
+        assert r_no_key.status_code == 401
+
+        r_wrong_key = client.get("/api/crew", headers={"X-API-Key": "wrong"})
+        assert r_wrong_key.status_code == 401
+
+        r_right_key = client.get("/api/crew", headers={"X-API-Key": "test-secret"})
+        assert r_right_key.status_code == 200
+    finally:
+        monkeypatch.delenv("ROFEHAI_API_KEY", raising=False)

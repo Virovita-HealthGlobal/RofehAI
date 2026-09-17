@@ -1,14 +1,22 @@
 """
 Persistence layer.
 
-Replaces the earlier pure in-memory registry with a real (if simple)
-SQLite-backed store, so data survives a restart. Swap `DATABASE_URL` for
-a real Postgres URL (e.g. on AWS RDS, per docs/DEPLOYMENT.md) for a real
-deployment -- SQLModel/SQLAlchemy make that a one-line change.
+SQLite-backed (Postgres-compatible, see docs/DEPLOYMENT.md) store for
+observations and countermeasure-log entries.
+
+SCHEMA CHANGE NOTE (domain-registry refactor): ObservationRecord now
+stores signals as a JSON-encoded text column instead of one hardcoded
+SQL column per signal, matching the generalized Observation.signals
+schema. This is a breaking change to any existing database -- since this
+is a synthetic-demo-only reference implementation with no real user
+data, the recommended migration is a clean reset (delete rofehai.db /
+drop and recreate the table) rather than an in-place migration script.
+See docs/ARCHITECTURE.md.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 
@@ -24,16 +32,7 @@ class ObservationRecord(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     crew_id: str = Field(index=True)
     mission_day: int
-
-    onsd_mm: float | None = None
-    globe_flattening_index: float | None = None
-    hrv_ms: float | None = None
-    radiation_dose_msv: float | None = None
-    sleep_hours: float | None = None
-    lbnp_sessions_7d: int | None = None
-    ebv_shedding_copies_ml: float | None = None
-    cortisol_dhea_ratio: float | None = None
-
+    signals_json: str = Field(default="{}")
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -52,7 +51,12 @@ def init_db() -> None:
 
 def save_observation(obs) -> None:
     with Session(engine) as session:
-        record = ObservationRecord(**obs.model_dump(exclude={"recorded_at"}))
+        record = ObservationRecord(
+            crew_id=obs.crew_id,
+            mission_day=obs.mission_day,
+            signals_json=json.dumps(obs.signals),
+            recorded_at=obs.recorded_at,
+        )
         session.add(record)
         session.commit()
 
@@ -70,14 +74,7 @@ def load_observations(crew_id: str):
             Observation(
                 crew_id=r.crew_id,
                 mission_day=r.mission_day,
-                onsd_mm=r.onsd_mm,
-                globe_flattening_index=r.globe_flattening_index,
-                hrv_ms=r.hrv_ms,
-                radiation_dose_msv=r.radiation_dose_msv,
-                sleep_hours=r.sleep_hours,
-                lbnp_sessions_7d=r.lbnp_sessions_7d,
-                ebv_shedding_copies_ml=r.ebv_shedding_copies_ml,
-                cortisol_dhea_ratio=r.cortisol_dhea_ratio,
+                signals=json.loads(r.signals_json),
                 recorded_at=r.recorded_at,
             )
             for r in rows

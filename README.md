@@ -2,17 +2,22 @@
 
 ![RofehAI](brand/logo.png)
 
-**Closed-loop, personalized health tracking for long-duration spaceflight crews.**
-Continuously learns each crew member's own physiological trends to surface
-SANS (Spaceflight-Associated Neuro-Ocular Syndrome) and immune-dysregulation
-risk before it becomes an emergency — without needing real-time contact
-with Earth.
+**RofehAI is one personalized astronaut health-intelligence platform,
+not a collection of separate AI medical applications.** It continuously
+learns each crew member's own physiological trends across multiple
+health domains — SANS (Spaceflight-Associated Neuro-Ocular Syndrome) and
+immune dysregulation are fully active today; seven further domains
+(cardiovascular, musculoskeletal, radiation, sleep/circadian, cognitive,
+behavioral, emergency/general) are registered as honestly-labeled
+architecture-ready placeholders — to surface risk before it becomes an
+emergency, without needing real-time contact with Earth.
 
 This repository is a working reference implementation of the architecture
 described in the RofehAI concept document and draft patent application:
-an individualized baseline ("digital twin"), a continuous trajectory-based
-risk model, confidence-gated fallback, and a human-in-the-loop
-countermeasure suggestion flow.
+a domain registry, an individualized baseline ("digital twin"), a
+continuous trajectory-based risk model shared across every domain,
+confidence-gated fallback, and a human-in-the-loop countermeasure
+suggestion flow.
 
 > **Read this before anything else:** this repo runs on **synthetic demo
 > data** and a **reference statistical model**, not a trained neural
@@ -27,7 +32,7 @@ countermeasure suggestion flow.
 
 ```
 rofehai-platform/
-├── backend/            FastAPI service — the digital twin, trajectory
+├── backend/            FastAPI service — domain registry, digital twin, trajectory
 │                        model, confidence scoring, and countermeasure logic
 ├── frontend/            Static HTML/CSS/JS mission dashboard
 ├── docs/
@@ -141,6 +146,13 @@ Added on top of the initial reference implementation, still well short of
   Postgres 16 instance (table creation, insert via the API, and an
   independent `SELECT` confirming the rows), not just assumed to work
   because the ORM supports it in theory.
+  **Breaking schema change (multi-domain refactor):** observations are now
+  stored as a JSON `signals` column instead of one hardcoded SQL column
+  per signal, matching the generalized `Observation.signals` schema. Any
+  existing `rofehai.db` (or Postgres database) from before this change
+  needs a clean reset — delete the SQLite file, or drop and let
+  `init_db()` recreate the table — since this is synthetic demo data with
+  no real users to migrate.
 - **Input validation**: `Observation` fields have realistic clinical
   ranges (e.g. ONSD 2–12mm); out-of-range or unknown-crew submissions
   are rejected with a clear 4xx, not silently accepted or a 500.

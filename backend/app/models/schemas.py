@@ -5,27 +5,21 @@ These mirror the entities described in the RofehAI concept document and
 draft patent application: an individualized baseline physiological model,
 continuous multi-modal observations, a risk-trajectory output, and a
 countermeasure recommendation.
+
+Generalized to a domain-agnostic signal payload (Observation.signals) so
+that adding a new health domain (see app.core.domains) does not require a
+schema migration -- see docs/ARCHITECTURE.md for the domain registry
+pattern this supports.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-
-class Condition(str, Enum):
-    """Candidate physiological conditions the platform tracks.
-
-    The architecture is condition-agnostic; new conditions are added by
-    registering a signal set and a countermeasure table, not by changing
-    the core trajectory-modeling or confidence-scoring logic.
-    """
-
-    SANS = "sans"  # Spaceflight-Associated Neuro-Ocular Syndrome
-    IMMUNE_DYSREGULATION = "immune_dysregulation"
+from app.core.domains import ALL_SIGNAL_SPECS, DOMAIN_REGISTRY
 
 
 class CrewMember(BaseModel):
@@ -37,34 +31,33 @@ class CrewMember(BaseModel):
 
 
 class Observation(BaseModel):
-    """A single multi-modal reading for one crew member on one mission day."""
+    """A single multi-modal reading for one crew member on one mission day.
+
+    `signals` is an open, domain-agnostic key-value payload (e.g.
+    {"onsd_mm": 5.1, "hrv_ms": 62.0}). Keys are validated against the
+    known signal registry (app.core.domains.ALL_SIGNAL_SPECS) when a
+    bound is defined there, so out-of-range or unknown values are still
+    rejected -- this preserves the same validation behavior as the
+    previous named-field schema, without hardcoding fields here.
+    """
 
     crew_id: str = Field(..., min_length=1, max_length=64)
     mission_day: int = Field(..., ge=0, le=3650)
-
-    # --- SANS-relevant signals ---
-    onsd_mm: Optional[float] = Field(
-        None, ge=2.0, le=12.0, description="Ultrasound-derived optic nerve sheath diameter, mm."
-    )
-    globe_flattening_index: Optional[float] = Field(
-        None, ge=0.0, le=5.0, description="Unitless index derived from ocular ultrasound; 0 = no flattening."
-    )
-    hrv_ms: Optional[float] = Field(None, ge=0.0, le=300.0, description="Heart rate variability, ms (SDNN).")
-    radiation_dose_msv: Optional[float] = Field(
-        None, ge=0.0, le=5000.0, description="Cumulative radiation dose since mission start, mSv."
-    )
-    sleep_hours: Optional[float] = Field(None, ge=0.0, le=24.0)
-    lbnp_sessions_7d: Optional[int] = Field(
-        None, ge=0, le=50, description="Lower-body negative pressure countermeasure sessions in trailing 7 days."
-    )
-
-    # --- Immune-dysregulation-relevant signals ---
-    ebv_shedding_copies_ml: Optional[float] = Field(
-        None, ge=0.0, description="EBV DNA copies/mL in saliva (proxy for viral reactivation)."
-    )
-    cortisol_dhea_ratio: Optional[float] = Field(None, ge=0.0, le=10.0)
-
+    signals: dict[str, float] = Field(default_factory=dict)
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("signals")
+    @classmethod
+    def _validate_signal_bounds(cls, signals: dict[str, float]) -> dict[str, float]:
+        for key, value in signals.items():
+            spec = ALL_SIGNAL_SPECS.get(key)
+            if spec is None:
+                continue  # unknown signal keys are allowed (forward-compatible with new domains)
+            if spec.min_val is not None and value < spec.min_val:
+                raise ValueError(f"signal '{key}'={value} is below the allowed minimum {spec.min_val}")
+            if spec.max_val is not None and value > spec.max_val:
+                raise ValueError(f"signal '{key}'={value} is above the allowed maximum {spec.max_val}")
+        return signals
 
 
 class RiskOutput(BaseModel):
@@ -77,7 +70,8 @@ class RiskOutput(BaseModel):
     """
 
     crew_id: str
-    condition: Condition
+    condition: str = Field(..., description="Health domain id, e.g. 'sans'. See /api/domains for the registry.")
+    domain_status: str = Field("active", description="'active' or 'architecture_ready' -- see app.core.domains.")
     mission_day: int
 
     current_risk: float = Field(..., ge=0, le=1, description="Current estimated risk, 0-1.")
@@ -89,8 +83,9 @@ class RiskOutput(BaseModel):
     is_fallback: bool = Field(
         False,
         description=(
-            "True when confidence fell below threshold and the platform is presenting "
-            "a conservative fallback recommendation instead of a specific risk figure."
+            "True when confidence fell below threshold (or the domain is architecture-ready "
+            "with no signals yet) and the platform is presenting a conservative fallback "
+            "instead of a specific risk figure."
         ),
     )
     top_contributors: list[str] = Field(
@@ -101,17 +96,24 @@ class RiskOutput(BaseModel):
         ..., description="Plain-language, non-diagnostic explanation for a non-specialist crew member."
     )
 
+    @field_validator("condition")
+    @classmethod
+    def _validate_domain_id(cls, v: str) -> str:
+        if v not in DOMAIN_REGISTRY:
+            raise ValueError(f"unknown health domain id '{v}'")
+        return v
+
 
 class Countermeasure(BaseModel):
     id: str
-    condition: Condition
+    condition: str
     name: str
     description: str
 
 
 class CountermeasureRecommendation(BaseModel):
     crew_id: str
-    condition: Condition
+    condition: str
     countermeasure: Countermeasure
     rationale: str
 
@@ -121,3 +123,13 @@ class CountermeasureLogEntry(BaseModel):
     countermeasure_id: str
     mission_day: int
     notes: Optional[str] = None
+
+
+class DomainInfo(BaseModel):
+    """Public-facing summary of one registered health domain, for the
+    /api/domains endpoint the dashboard uses to render both fully-active
+    risk cards and architecture-ready placeholder badges."""
+
+    id: str
+    display_name: str
+    status: str

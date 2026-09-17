@@ -20,6 +20,7 @@ window.RofehAPI = (() => {
   return {
     listCrew: () => get("/crew"),
     missionMeta: () => get("/mission/meta"),
+    domains: () => get("/domains"),
     observations: (crewId, missionDay) => get(`/crew/${crewId}/observations?mission_day=${missionDay}`),
     risk: (crewId, condition, missionDay) => get(`/crew/${crewId}/risk/${condition}?mission_day=${missionDay}`),
     countermeasure: (crewId, condition, missionDay) =>

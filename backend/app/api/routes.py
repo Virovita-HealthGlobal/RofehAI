@@ -7,11 +7,12 @@ from fastapi import APIRouter, HTTPException
 from app.core import countermeasures as cm
 from app.core import db
 from app.core.digital_twin import registry
+from app.core.domains import DOMAIN_REGISTRY, active_domains, all_domains
 from app.core.trajectory_model import score
 from app.data.synthetic import CREW, MISSION_LENGTH_DAYS, generate_mission_history
 from app.models.schemas import (
-    Condition,
     CountermeasureLogEntry,
+    DomainInfo,
     Observation,
     RiskOutput,
 )
@@ -50,6 +51,11 @@ def _ensure_seeded(crew_id: str, up_to_day: int) -> None:
         registry.ingest(obs)
 
 
+def _require_domain(domain_id: str) -> None:
+    if domain_id not in DOMAIN_REGISTRY:
+        raise HTTPException(status_code=404, detail=f"Unknown health domain '{domain_id}'")
+
+
 @router.get("/crew")
 def list_crew():
     return CREW
@@ -58,6 +64,15 @@ def list_crew():
 @router.get("/mission/meta")
 def mission_meta():
     return {"mission_length_days": MISSION_LENGTH_DAYS, "name": "Mars transit (reference demo)"}
+
+
+@router.get("/domains", response_model=list[DomainInfo])
+def list_domains():
+    """All registered health domains -- both fully active (real synthetic
+    scoring) and architecture-ready placeholders. The dashboard uses this
+    to render active domains as full risk cards and everything else as
+    honestly-labeled 'architecture ready' badges."""
+    return [DomainInfo(id=d.id, display_name=d.display_name, status=d.status) for d in all_domains()]
 
 
 @router.get("/crew/{crew_id}/observations")
@@ -79,27 +94,31 @@ def submit_observation(obs: Observation):
     return obs
 
 
-@router.get("/crew/{crew_id}/risk/{condition}", response_model=RiskOutput)
-def get_risk(crew_id: str, condition: Condition, mission_day: int = MISSION_LENGTH_DAYS):
+@router.get("/crew/{crew_id}/risk/{domain_id}", response_model=RiskOutput)
+def get_risk(crew_id: str, domain_id: str, mission_day: int = MISSION_LENGTH_DAYS):
+    _require_domain(domain_id)
     _ensure_seeded(crew_id, mission_day)
     twin = registry.get_or_create(crew_id)
     if not twin.history:
         raise HTTPException(status_code=404, detail="Unknown crew member")
-    return score(twin, condition, mission_day)
+    return score(twin, domain_id, mission_day)
 
 
 @router.get("/crew/{crew_id}/risk", response_model=list[RiskOutput])
 def get_all_risk(crew_id: str, mission_day: int = MISSION_LENGTH_DAYS):
+    """Risk for every ACTIVE domain (architecture-ready placeholders are
+    listed via /api/domains, not scored here -- there's nothing to score)."""
     _ensure_seeded(crew_id, mission_day)
     twin = registry.get_or_create(crew_id)
-    return [score(twin, c, mission_day) for c in Condition]
+    return [score(twin, d.id, mission_day) for d in active_domains()]
 
 
-@router.get("/crew/{crew_id}/countermeasure/{condition}")
-def get_countermeasure(crew_id: str, condition: Condition, mission_day: int = MISSION_LENGTH_DAYS):
+@router.get("/crew/{crew_id}/countermeasure/{domain_id}")
+def get_countermeasure(crew_id: str, domain_id: str, mission_day: int = MISSION_LENGTH_DAYS):
+    _require_domain(domain_id)
     _ensure_seeded(crew_id, mission_day)
     twin = registry.get_or_create(crew_id)
-    risk = score(twin, condition, mission_day)
+    risk = score(twin, domain_id, mission_day)
     rec = cm.recommend(risk)
     return rec.model_dump() if rec else None
 

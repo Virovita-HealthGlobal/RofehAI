@@ -9,12 +9,15 @@ bed rest studies (the established Earth-based analog for SANS), as
 described in the concept document. This sandbox has no network access to
 those restricted/registered data portals, so this module generates
 clearly-labeled SYNTHETIC data with realistic shapes (progressive ONSD
-increase, HRV drift, EBV shedding bursts) purely so the rest of the system
-(API, trajectory model, dashboard) can be exercised end to end.
+increase, HRV drift, EBV shedding bursts) purely so the rest of the
+system (API, trajectory model, dashboard) can be exercised end to end.
 
 Do not present output derived from this module as a validated clinical
 result. Swap `generate_mission_history()` for a real data-loading module
 before any real evaluation.
+
+DOMAIN-GENERIC NOTE: signal values are packed into Observation.signals
+(a dict) rather than named fields, matching the generalized schema.
 """
 
 from __future__ import annotations
@@ -94,19 +97,17 @@ def generate_mission_history(crew_id: str, up_to_day: int | None = None) -> list
             ebv = max(0.0, random.gauss(150 + 400 * profile.immune_susceptibility, 80))
         cortisol_dhea = 0.8 + 0.5 * t * profile.immune_susceptibility + _noise(0.05)
 
-        history.append(
-            Observation(
-                crew_id=crew_id,
-                mission_day=day,
-                onsd_mm=round(onsd, 3),
-                globe_flattening_index=round(globe_flat, 3),
-                hrv_ms=round(max(hrv, 15), 1),
-                radiation_dose_msv=round(max(radiation, 0), 1),
-                sleep_hours=round(max(sleep, 3.0), 2),
-                lbnp_sessions_7d=lbnp_sessions,
-                ebv_shedding_copies_ml=round(ebv, 1),
-                cortisol_dhea_ratio=round(cortisol_dhea, 3),
-            )
-        )
+        signals = {
+            "onsd_mm": round(onsd, 3),
+            "globe_flattening_index": round(globe_flat, 3),
+            "hrv_ms": round(max(hrv, 15), 1),
+            "radiation_dose_msv": round(max(radiation, 0), 1),
+            "sleep_hours": round(max(sleep, 3.0), 2),
+            "lbnp_sessions_7d": lbnp_sessions,
+            "ebv_shedding_copies_ml": round(ebv, 1),
+            "cortisol_dhea_ratio": round(cortisol_dhea, 3),
+        }
+
+        history.append(Observation(crew_id=crew_id, mission_day=day, signals=signals))
 
     return history

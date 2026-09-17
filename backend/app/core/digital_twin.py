@@ -4,6 +4,10 @@ Individualized baseline physiological model ("digital twin").
 Per the concept document, risk is measured relative to each subject's own
 baseline rather than a population average, because individual anatomical
 and physiological variation is a documented factor in conditions like SANS.
+
+Generalized to a signal-dict baseline (rather than named per-domain
+fields) so this module doesn't need to change when a new health domain
+is added to the registry -- see app.core.domains.
 """
 
 from __future__ import annotations
@@ -18,12 +22,11 @@ BASELINE_WINDOW_DAYS = 15  # observations within this many days of enrollment de
 
 @dataclass
 class Baseline:
-    onsd_mm: float
-    globe_flattening_index: float
-    hrv_ms: float
-    ebv_shedding_copies_ml: float
-    cortisol_dhea_ratio: float
+    signals: dict[str, float]
     n_observations: int
+
+    def get(self, field_name: str, default: float | None = None) -> float | None:
+        return self.signals.get(field_name, default)
 
 
 @dataclass
@@ -46,18 +49,18 @@ class DigitalTwin:
         if not early:
             return None
 
-        def avg(attr: str) -> float:
-            vals = [getattr(o, attr) for o in early if getattr(o, attr) is not None]
-            return sum(vals) / len(vals) if vals else 0.0
+        # Average each signal key that appears in any early observation.
+        all_keys: set[str] = set()
+        for o in early:
+            all_keys.update(o.signals.keys())
 
-        self._baseline = Baseline(
-            onsd_mm=avg("onsd_mm"),
-            globe_flattening_index=avg("globe_flattening_index"),
-            hrv_ms=avg("hrv_ms"),
-            ebv_shedding_copies_ml=avg("ebv_shedding_copies_ml"),
-            cortisol_dhea_ratio=avg("cortisol_dhea_ratio"),
-            n_observations=len(early),
-        )
+        averaged: dict[str, float] = {}
+        for key in all_keys:
+            vals = [o.signals[key] for o in early if key in o.signals]
+            if vals:
+                averaged[key] = sum(vals) / len(vals)
+
+        self._baseline = Baseline(signals=averaged, n_observations=len(early))
         return self._baseline
 
     def window(self, up_to_day: int, days: int) -> list[Observation]:

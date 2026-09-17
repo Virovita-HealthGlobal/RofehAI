@@ -15,66 +15,29 @@ and demonstrated end to end without requiring a trained neural network or
 restricted-access datasets.
 
 Swapping this module for a trained sequence model later should not
-require changing its public interface (`score()` -> RiskOutput-shaped dict),
-since the API and dashboard are built against that interface, not against
+require changing its public interface (`score()` -> RiskOutput), since
+the API and dashboard are built against that interface, not against
 this implementation.
+
+DOMAIN-GENERIC NOTE
+--------------------
+This module reads its signal list, weights, and narrative templates from
+the domain registry (app.core.domains) rather than hardcoding them here.
+Adding a new domain does not require changing this file -- see
+app/core/domains.py.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 
 from app.core.digital_twin import DigitalTwin
-from app.models.schemas import Condition, RiskOutput
+from app.core.domains import DOMAIN_REGISTRY, NOT_IMPLEMENTED_NARRATIVE, HealthDomain
+from app.models.schemas import RiskOutput
 
 TRAJECTORY_WINDOW_DAYS = 30
 CONFIDENCE_THRESHOLD = 0.55
 MIN_OBSERVATIONS_FOR_CONFIDENCE = 4
-
-
-@dataclass
-class SignalSpec:
-    """One fused input signal: which field, which direction counts as 'worse',
-    how much it should weigh in the fused score, and the clinically-meaningful
-    scale used to normalize deviations (deliberately NOT a divide-by-baseline,
-    since some signals such as globe flattening have a near-zero baseline)."""
-
-    field: str
-    weight: float
-    scale: float
-    higher_is_worse: bool = True
-    label: str = ""
-
-
-SANS_SIGNALS = [
-    SignalSpec("onsd_mm", weight=0.40, scale=1.0, label="optic nerve sheath diameter"),
-    SignalSpec("globe_flattening_index", weight=0.30, scale=0.5, label="globe flattening"),
-    SignalSpec("hrv_ms", weight=0.15, scale=15.0, higher_is_worse=False, label="heart rate variability"),
-    SignalSpec("radiation_dose_msv", weight=0.15, scale=200.0, label="cumulative radiation dose"),
-]
-
-IMMUNE_SIGNALS = [
-    SignalSpec("ebv_shedding_copies_ml", weight=0.65, scale=300.0, label="EBV viral shedding"),
-    SignalSpec("cortisol_dhea_ratio", weight=0.35, scale=0.5, label="cortisol:DHEA ratio"),
-]
-
-SIGNAL_SETS: dict[Condition, list[SignalSpec]] = {
-    Condition.SANS: SANS_SIGNALS,
-    Condition.IMMUNE_DYSREGULATION: IMMUNE_SIGNALS,
-}
-
-NARRATIVES = {
-    Condition.SANS: {
-        True: "Ocular and cardiovascular trends over the last {window} days suggest elevated, worsening SANS-related risk. This is not a diagnosis -- review with the crew medical officer and consider repeat imaging.",
-        False: "Ocular and cardiovascular trends over the last {window} days remain within this crew member's expected range for SANS-related risk.",
-    },
-    Condition.IMMUNE_DYSREGULATION: {
-        True: "Viral shedding and stress-hormone trends over the last {window} days suggest elevated immune dysregulation risk. This is not a diagnosis -- consider stress/sleep review and monitor for symptoms.",
-        False: "Viral shedding and stress-hormone trends over the last {window} days remain within this crew member's expected range.",
-    },
-}
 
 FALLBACK_NARRATIVE = (
     "Not enough recent data to produce a confident risk estimate for this crew member. "
@@ -95,23 +58,34 @@ def _slope_and_fit(days: np.ndarray, values: np.ndarray) -> tuple[float, float]:
     return float(slope), max(0.0, min(1.0, fit))
 
 
-def score(twin: DigitalTwin, condition: Condition, mission_day: int) -> RiskOutput:
+def _fallback_output(twin: DigitalTwin, domain: HealthDomain, mission_day: int, narrative: str) -> RiskOutput:
+    return RiskOutput(
+        crew_id=twin.crew_id,
+        condition=domain.id,
+        domain_status=domain.status,
+        mission_day=mission_day,
+        current_risk=0.0,
+        risk_delta_30d=0.0,
+        confidence=0.0,
+        is_fallback=True,
+        top_contributors=[],
+        narrative=narrative,
+    )
+
+
+def score(twin: DigitalTwin, domain_id: str, mission_day: int) -> RiskOutput:
+    domain = DOMAIN_REGISTRY[domain_id]
+
+    # Architecture-ready domains have no signals wired up -- return an
+    # explicit "not implemented" output rather than fabricate a score.
+    if domain.status != "active" or not domain.signals:
+        return _fallback_output(twin, domain, mission_day, NOT_IMPLEMENTED_NARRATIVE)
+
     baseline = twin.baseline()
-    signals = SIGNAL_SETS[condition]
     window_obs = twin.window(mission_day, TRAJECTORY_WINDOW_DAYS)
 
     if baseline is None or len(window_obs) < MIN_OBSERVATIONS_FOR_CONFIDENCE:
-        return RiskOutput(
-            crew_id=twin.crew_id,
-            condition=condition,
-            mission_day=mission_day,
-            current_risk=0.0,
-            risk_delta_30d=0.0,
-            confidence=0.0,
-            is_fallback=True,
-            top_contributors=[],
-            narrative=FALLBACK_NARRATIVE,
-        )
+        return _fallback_output(twin, domain, mission_day, FALLBACK_NARRATIVE)
 
     days = np.array([o.mission_day for o in window_obs], dtype=float)
     per_signal_contrib: list[tuple[str, float, float]] = []  # (label, weighted deviation, fit)
@@ -119,18 +93,18 @@ def score(twin: DigitalTwin, condition: Condition, mission_day: int) -> RiskOutp
     fused_slope = 0.0
     fit_scores = []
 
-    for spec in signals:
+    for spec in domain.signals:
         values = np.array(
-            [getattr(o, spec.field) for o in window_obs if getattr(o, spec.field) is not None],
+            [o.signals[spec.field] for o in window_obs if spec.field in o.signals],
             dtype=float,
         )
         obs_days = np.array(
-            [o.mission_day for o in window_obs if getattr(o, spec.field) is not None], dtype=float
+            [o.mission_day for o in window_obs if spec.field in o.signals], dtype=float
         )
         if len(values) < 2:
             continue
 
-        baseline_val = getattr(baseline, spec.field, None)
+        baseline_val = baseline.get(spec.field)
         baseline_val = baseline_val if baseline_val is not None else float(np.mean(values))
 
         slope, fit = _slope_and_fit(obs_days, values)
@@ -166,11 +140,13 @@ def score(twin: DigitalTwin, condition: Condition, mission_day: int) -> RiskOutp
     if is_fallback:
         narrative = FALLBACK_NARRATIVE
     else:
-        narrative = NARRATIVES[condition][elevated].format(window=TRAJECTORY_WINDOW_DAYS)
+        template = domain.narrative_elevated if elevated else domain.narrative_stable
+        narrative = template.format(window=TRAJECTORY_WINDOW_DAYS)
 
     return RiskOutput(
         crew_id=twin.crew_id,
-        condition=condition,
+        condition=domain.id,
+        domain_status=domain.status,
         mission_day=mission_day,
         current_risk=round(current_risk, 3),
         risk_delta_30d=round(risk_delta, 3),

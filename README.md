@@ -1,5 +1,7 @@
 # RofehAI
 
+![RofehAI](brand/logo.png)
+
 **Closed-loop, personalized health tracking for long-duration spaceflight crews.**
 Continuously learns each crew member's own physiological trends to surface
 SANS (Spaceflight-Associated Neuro-Ocular Syndrome) and immune-dysregulation

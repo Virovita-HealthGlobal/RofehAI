@@ -54,7 +54,26 @@ def test_observation_rejects_unknown_crew_id():
     assert r.status_code == 404
 
 
-def test_api_key_enforced_when_configured(monkeypatch):
+def test_gate_check_correct_code():
+    r = client.post("/api/gate/check", json={"code": "rofehai-preview-2026"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+
+def test_gate_check_wrong_code():
+    r = client.post("/api/gate/check", json={"code": "wrong-code"})
+    assert r.status_code == 401
+
+
+def test_gate_check_custom_code(monkeypatch):
+    monkeypatch.setenv("ROFEHAI_GATE_CODE", "custom-secret")
+    try:
+        r_old = client.post("/api/gate/check", json={"code": "rofehai-preview-2026"})
+        assert r_old.status_code == 401
+        r_new = client.post("/api/gate/check", json={"code": "custom-secret"})
+        assert r_new.status_code == 200
+    finally:
+        monkeypatch.delenv("ROFEHAI_GATE_CODE", raising=False)
     monkeypatch.setenv("ROFEHAI_API_KEY", "test-secret")
     try:
         r_no_key = client.get("/api/crew")

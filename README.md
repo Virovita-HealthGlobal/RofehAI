@@ -152,6 +152,19 @@ Added on top of the initial reference implementation, still well short of
   suite on every push/PR.
 - **Error handling**: unhandled exceptions return a generic 500 without
   leaking stack traces; the real error is logged server-side.
+- **Access gate**: `frontend/gate.html` is a combined About + NDA
+  acknowledgment + passcode page shown before the dashboard
+  (`frontend/index.html` redirects here if the session hasn't passed it).
+  This is a **soft, session-scoped gate for a link-shared demo** — it
+  keeps casual/unintended visitors out and gives every visitor the
+  context a cold landing on the dashboard didn't provide (what this is,
+  who it's for, how to use it). It is **not** a real per-user
+  authentication system: there's one shared passcode
+  (`ROFEHAI_GATE_CODE` env var, default `rofehai-preview-2026` — change
+  this before sharing the link), no individual accounts, and the
+  check is only as strong as keeping that one passcode private. Real,
+  per-user accounts (individual credentials, sessions, roles) are a
+  separate, larger piece of work — see Roadmap.
 
 ## Disclaimers
 

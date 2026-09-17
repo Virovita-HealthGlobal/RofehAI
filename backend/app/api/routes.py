@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, HTTPException
 
 from app.core import countermeasures as cm
@@ -15,6 +17,24 @@ from app.models.schemas import (
 )
 
 router = APIRouter()
+
+# --- Access gate ---------------------------------------------------------
+# A simple, single-shared-passcode gate for the dashboard's landing page
+# (frontend/gate.html) -- NOT a per-user auth system. It exists to keep
+# casual/unintended visitors off a link-shared demo, not to protect
+# sensitive data (the demo only ever runs on synthetic data). Real,
+# per-user accounts are a separate, larger piece of work -- see README.
+GATE_CODE_ENV_VAR = "ROFEHAI_GATE_CODE"
+DEFAULT_GATE_CODE = "rofehai-preview-2026"  # change via ROFEHAI_GATE_CODE before real use
+
+
+@router.post("/gate/check")
+def gate_check(payload: dict):
+    configured = os.environ.get(GATE_CODE_ENV_VAR, DEFAULT_GATE_CODE)
+    submitted = (payload or {}).get("code", "")
+    if submitted != configured:
+        raise HTTPException(status_code=401, detail="Incorrect access code")
+    return {"ok": True}
 
 
 def _ensure_seeded(crew_id: str, up_to_day: int) -> None:

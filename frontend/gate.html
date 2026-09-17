@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RofehAI — Access</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<link rel="stylesheet" href="css/styles.css" />
+<style>
+  .gate-wrap {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 60px 24px;
+  }
+  .gate-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px 36px;
+  }
+  .gate-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+  .gate-logo img { width: 40px; height: 40px; }
+  .gate-logo .name { font-weight: 600; font-size: 20px; }
+  .gate-section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-2); margin: 22px 0 8px; }
+  .gate-p { font-size: 14px; line-height: 1.6; color: var(--text-1); margin: 0 0 10px; }
+  .gate-p strong { color: var(--text-1); }
+  .gate-list { margin: 8px 0 0; padding-left: 18px; }
+  .gate-list li { font-size: 13.5px; line-height: 1.6; color: var(--text-2); margin-bottom: 6px; }
+  .gate-form { margin-top: 26px; border-top: 1px solid var(--border); padding-top: 22px; }
+  .gate-checkbox-row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 18px; }
+  .gate-checkbox-row input { margin-top: 3px; }
+  .gate-checkbox-row label { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+  .gate-input {
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-1);
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+  }
+  .gate-error { color: var(--status-critical); font-size: 13px; margin-bottom: 12px; display: none; }
+  .gate-btn {
+    width: 100%;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 600;
+    background: var(--accent);
+    color: #0A1020;
+    border: none;
+    border-radius: 6px;
+    padding: 12px;
+    cursor: pointer;
+  }
+  .gate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .gate-footer { text-align: center; margin-top: 18px; font-size: 11px; color: var(--text-3); }
+</style>
+</head>
+<body>
+  <div class="gate-wrap">
+    <div class="gate-card">
+      <div class="gate-logo">
+        <img src="assets/icon.png" alt="RofehAI" />
+        <span class="name">RofehAI</span>
+      </div>
+
+      <p class="gate-p"><strong>What this is:</strong> a working reference implementation of RofehAI's proposed architecture — a personalized, trajectory-based health-risk monitoring system for long-duration spaceflight crews, starting with SANS (spaceflight-associated vision risk) and immune dysregulation.</p>
+
+      <div class="gate-section-title">Who this is for</div>
+      <ul class="gate-list">
+        <li>Investors and reviewers evaluating the concept and technical approach</li>
+        <li>Potential institutional partners (e.g. TRISH) assessing feasibility</li>
+        <li>Collaborators and advisors reviewing the architecture</li>
+      </ul>
+
+      <div class="gate-section-title">What this is not</div>
+      <ul class="gate-list">
+        <li>Not a clinically validated product — runs on synthetic demo data only</li>
+        <li>Not a medical device, not for real clinical or diagnostic use</li>
+        <li>Not a finished commercial product — concept / reference stage</li>
+      </ul>
+
+      <div class="gate-section-title">How to use it</div>
+      <ul class="gate-list">
+        <li>Select a crew member from the roster on the left</li>
+        <li>Review their SANS and immune-dysregulation risk trajectory, confidence, and driving signals</li>
+        <li>Review any suggested countermeasure — the system only ever suggests; a person decides and logs the action</li>
+      </ul>
+
+      <form class="gate-form" id="gate-form">
+        <div class="gate-checkbox-row">
+          <input type="checkbox" id="nda-ack" required />
+          <label for="nda-ack">I agree to keep the contents of this demo confidential and not distribute access without authorization, per RofehAI's proprietary/NDA notice.</label>
+        </div>
+        <input class="gate-input" id="gate-code" type="password" placeholder="Access code" autocomplete="off" required />
+        <div class="gate-error" id="gate-error">Incorrect access code. Please try again.</div>
+        <button class="gate-btn" type="submit" id="gate-submit">Enter dashboard</button>
+      </form>
+
+      <div class="gate-footer">Confidential — concept stage. Contact the RofehAI team if you need an access code.</div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script>
+    const alreadyPassed = sessionStorage.getItem("rofehai_gate_passed") === "1";
+    const form = document.getElementById("gate-form");
+    const errorEl = document.getElementById("gate-error");
+    const submitBtn = document.getElementById("gate-submit");
+
+    if (alreadyPassed) {
+      document.getElementById("nda-ack").checked = true;
+      document.getElementById("gate-code").removeAttribute("required");
+      document.getElementById("gate-code").placeholder = "Already unlocked this session";
+      document.getElementById("gate-code").disabled = true;
+      submitBtn.textContent = "Continue to dashboard";
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (alreadyPassed) {
+        window.location.href = "index.html";
+        return;
+      }
+      errorEl.style.display = "none";
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Checking…";
+      const code = document.getElementById("gate-code").value;
+      try {
+        const res = await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/gate/check`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        if (!res.ok) throw new Error("bad code");
+        sessionStorage.setItem("rofehai_gate_passed", "1");
+        window.location.href = "index.html";
+      } catch (err) {
+        errorEl.style.display = "block";
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Enter dashboard";
+      }
+    });
+  </script>
+</body>
+</html>

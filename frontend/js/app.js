@@ -5,6 +5,7 @@
   let activeDomains = [];      // [{id, display_name, status}] where status === "active"
   let placeholderDomains = []; // status === "architecture_ready"
   const conversationIdByCrew = {}; // crew_id -> conversation_id, so each crew member's thread persists while browsing
+  let fleetConversationId = null; // separate conversation thread for fleet-wide (crew-id-less) questions
 
   const rosterList = document.getElementById("roster-list");
   const detailPanel = document.getElementById("detail-panel");
@@ -60,6 +61,7 @@
       }
     }
 
+    wireFleetChatForm();
     if (crew.length) selectCrew(crew[0].id, crew[0].name);
   }
 
@@ -171,8 +173,8 @@
     `;
   }
 
-  function appendChatMessage(role, text) {
-    const log = document.getElementById("chat-log");
+  function appendChatMessage(role, text, logId = "chat-log") {
+    const log = document.getElementById(logId);
     if (!log) return;
     const bubble = document.createElement("div");
     bubble.style.cssText =
@@ -182,6 +184,34 @@
     bubble.textContent = text;
     log.appendChild(bubble);
     log.scrollTop = log.scrollHeight;
+  }
+
+  function wireFleetChatForm() {
+    const form = document.getElementById("fleet-chat-form");
+    if (!form) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("fleet-chat-input");
+      const sendBtn = document.getElementById("fleet-chat-send");
+      const question = input.value.trim();
+      if (!question) return;
+
+      appendChatMessage("user", question, "fleet-chat-log");
+      input.value = "";
+      sendBtn.disabled = true;
+      sendBtn.textContent = "Thinking…";
+
+      try {
+        const res = await RofehAPI.askAgent(null, question, fleetConversationId);
+        fleetConversationId = res.conversation_id;
+        appendChatMessage("agent", res.answer, "fleet-chat-log");
+      } catch (err) {
+        appendChatMessage("agent", "Sorry — the agent isn't available right now. It may not be configured on this server yet.", "fleet-chat-log");
+      } finally {
+        sendBtn.disabled = false;
+        sendBtn.textContent = "Ask about crew";
+      }
+    });
   }
 
   function wireChatForm() {

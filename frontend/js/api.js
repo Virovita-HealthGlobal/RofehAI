@@ -27,6 +27,6 @@ window.RofehAPI = (() => {
       get(`/crew/${crewId}/countermeasure/${condition}?mission_day=${missionDay}`),
     logCountermeasure: (entry) => post("/countermeasures/log", entry),
     askAgent: (crewId, question, conversationId) =>
-      post("/agent/ask", { crew_id: crewId, question, conversation_id: conversationId || null }),
+      post("/agent/ask", { crew_id: crewId || null, question, conversation_id: conversationId || null }),
   };
 })();

@@ -88,6 +88,18 @@ separate risk cards one at a time. It has genuine multi-step tool use
 `conversation_id` lets a follow-up question like "did the countermeasure
 help?" reference what was discussed before, without re-stating context).
 
+Two request shapes:
+- **Single crew member**: `{"crew_id": "crew-01", "question": "..."}` —
+  scoped to that person only. The model cannot be tricked into reading a
+  different crew member's data via a tool argument; this is a real
+  access-control boundary enforced in code, not just prompted for.
+- **Fleet-wide triage** (use case 3): omit `crew_id` entirely — e.g.
+  `{"question": "who needs review today?"}`. The model calls `list_crew`
+  and checks active domains across the real roster, then composes a
+  briefing grouped by crew member, prioritized by risk. Every
+  `(crew_id, domain_id)` pair in the answer is backed by a real fetch —
+  nothing is fabricated just because a name exists in the roster.
+
 **The safety design, in one sentence:** the model never writes the final
 clinical text itself — it can only select which already-fetched
 `RiskOutput`/`Countermeasure` data to include, and the backend assembles

@@ -130,12 +130,16 @@ TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
+                            "crew_id": {
+                                "type": "string",
+                                "description": "Required when the question is about the whole crew/roster rather than one named crew member -- which crew member this section is about. Omit for a single-crew-member request.",
+                            },
                             "domain_id": {"type": "string"},
                             "include_countermeasure": {"type": "boolean"},
                         },
                         "required": ["domain_id"],
                     },
-                    "description": "Domains to include in the briefing, in the order they should appear. Ignored if recall_prior_answer is true.",
+                    "description": "Domains (and, for a fleet-wide question, which crew member) to include in the briefing, in the order they should appear. Ignored if recall_prior_answer is true.",
                 },
             },
             "required": [],
@@ -148,10 +152,14 @@ TOOLS = [
 class _FetchedData:
     """Everything real that's been fetched so far in this conversation
     turn. compose_answer can only reference what's already in here --
-    it cannot conjure a domain result that was never actually fetched."""
+    it cannot conjure a domain result that was never actually fetched.
+    Keyed by (crew_id, domain_id) rather than just domain_id so this
+    works for both single-crew-member requests and fleet-wide triage
+    (use case 3), where the model may fetch data for several crew
+    members in one turn."""
 
-    risks: dict[str, RiskOutput] = field(default_factory=dict)  # domain_id -> RiskOutput
-    countermeasures: dict[str, CountermeasureRecommendation | None] = field(default_factory=dict)
+    risks: dict[tuple[str, str], RiskOutput] = field(default_factory=dict)
+    countermeasures: dict[tuple[str, str], CountermeasureRecommendation | None] = field(default_factory=dict)
 
 
 class AgentError(Exception):
@@ -173,7 +181,26 @@ class AgentRateLimitError(AgentError):
     pass
 
 
-def _execute_tool(name: str, tool_input: dict, crew_id: str, fetched: _FetchedData) -> dict:
+_KNOWN_CREW_IDS = {c.id for c in CREW}
+
+
+def _resolve_crew_id(tool_input: dict, bound_crew_id: str | None) -> str:
+    """Single-crew-member requests (bound_crew_id set) always ignore
+    whatever crew_id the model puts in tool_input -- this is a real
+    access-control boundary: a request scoped to one crew member cannot
+    be tricked into reading another's data via a tool argument. Only in
+    fleet mode (bound_crew_id is None, use case 3: crew-wide triage) does
+    the model get to choose which crew member each call is about, and
+    even then only from the real, known roster."""
+    if bound_crew_id is not None:
+        return bound_crew_id
+    requested = tool_input.get("crew_id")
+    if requested not in _KNOWN_CREW_IDS:
+        raise AgentError(f"unknown or missing crew_id '{requested}'")
+    return requested
+
+
+def _execute_tool(name: str, tool_input: dict, crew_id: str | None, fetched: _FetchedData) -> dict:
     if name == "list_domains":
         return {"domains": [{"id": d.id, "display_name": d.display_name, "status": d.status} for d in all_domains()]}
 
@@ -184,36 +211,44 @@ def _execute_tool(name: str, tool_input: dict, crew_id: str, fetched: _FetchedDa
         domain_id = tool_input["domain_id"]
         if domain_id not in DOMAIN_REGISTRY:
             return {"error": f"unknown domain_id '{domain_id}'"}
-        ensure_seeded(crew_id, MISSION_LENGTH_DAYS)
-        twin = registry.get_or_create(crew_id)
+        resolved_crew_id = _resolve_crew_id(tool_input, crew_id)
+        ensure_seeded(resolved_crew_id, MISSION_LENGTH_DAYS)
+        twin = registry.get_or_create(resolved_crew_id)
         result = score(twin, domain_id, MISSION_LENGTH_DAYS)
-        fetched.risks[domain_id] = result
+        fetched.risks[(resolved_crew_id, domain_id)] = result
         return result.model_dump()
 
     if name == "get_countermeasure":
         domain_id = tool_input["domain_id"]
         if domain_id not in DOMAIN_REGISTRY:
             return {"error": f"unknown domain_id '{domain_id}'"}
-        ensure_seeded(crew_id, MISSION_LENGTH_DAYS)
-        twin = registry.get_or_create(crew_id)
-        risk = fetched.risks.get(domain_id) or score(twin, domain_id, MISSION_LENGTH_DAYS)
-        fetched.risks[domain_id] = risk
+        resolved_crew_id = _resolve_crew_id(tool_input, crew_id)
+        ensure_seeded(resolved_crew_id, MISSION_LENGTH_DAYS)
+        twin = registry.get_or_create(resolved_crew_id)
+        risk = fetched.risks.get((resolved_crew_id, domain_id)) or score(twin, domain_id, MISSION_LENGTH_DAYS)
+        fetched.risks[(resolved_crew_id, domain_id)] = risk
         rec = cm.recommend(risk)
-        fetched.countermeasures[domain_id] = rec
+        fetched.countermeasures[(resolved_crew_id, domain_id)] = rec
         return rec.model_dump() if rec else {"countermeasure": None}
 
     raise AgentError(f"unknown tool '{name}'")
 
 
 def _compose_final_answer(
-    crew_id: str, tool_input: dict, fetched: _FetchedData, conversation_id: str | None = None
+    crew_id: str | None, tool_input: dict, fetched: _FetchedData, conversation_id: str | None = None
 ) -> tuple[str, list[AgentSource]]:
     """The ONE place the final answer text is assembled. Every sentence
     here is either a fixed constant (OPENING_TONES), copied verbatim from
     a real RiskOutput/CountermeasureRecommendation already fetched, or --
     for a recall_prior_answer request -- the agent's own most recent
     answer in this same conversation, which was already assembled the
-    same safe way. Never text the model typed fresh. See module docstring."""
+    same safe way. Never text the model typed fresh. See module docstring.
+
+    crew_id is None for a fleet-wide (use case 3) request -- in that case
+    each section MUST carry its own crew_id (resolved via
+    _resolve_crew_id's same rules), and output is grouped by crew member
+    so a multi-person briefing reads clearly rather than as one
+    undifferentiated block."""
     if tool_input.get("recall_prior_answer") and conversation_id:
         from app.core import db
 
@@ -229,11 +264,24 @@ def _compose_final_answer(
     lines = [OPENING_TONES[tone]]
     sources: list[AgentSource] = []
 
+    crew_name_by_id = {c.id: c.name for c in CREW}
+    last_crew_id_shown = None
+
     for section in tool_input.get("sections", []):
         domain_id = section.get("domain_id")
-        risk = fetched.risks.get(domain_id)
+        section_crew_id = section.get("crew_id") or crew_id
+        if not domain_id or not section_crew_id:
+            continue  # can't resolve which crew member/domain this refers to -- skip rather than guess
+        risk = fetched.risks.get((section_crew_id, domain_id))
         if risk is None:
-            continue  # ignore any domain the model didn't actually fetch -- can't be included
+            continue  # ignore any (crew, domain) the model didn't actually fetch -- can't be included
+
+        # In fleet mode (crew_id is None), group consecutive sections under a crew-member heading.
+        if crew_id is None and section_crew_id != last_crew_id_shown:
+            crew_display = crew_name_by_id.get(section_crew_id, section_crew_id)
+            lines.append(f"\n### {crew_display} ({section_crew_id})")
+            last_crew_id_shown = section_crew_id
+
         domain = DOMAIN_REGISTRY.get(domain_id)
         display_name = domain.display_name if domain else domain_id
 
@@ -245,13 +293,13 @@ def _compose_final_answer(
                 f"({'+' if risk.risk_delta_30d >= 0 else ''}{round(risk.risk_delta_30d * 100)}% / 30d), "
                 f"confidence {risk.confidence:.2f}. {risk.narrative}"
             )
-        sources.append(AgentSource(domain_id=domain_id, kind="risk"))
+        sources.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="risk"))
 
         if section.get("include_countermeasure"):
-            rec = fetched.countermeasures.get(domain_id)
+            rec = fetched.countermeasures.get((section_crew_id, domain_id))
             if rec:
                 lines.append(f"  Suggested: {rec.countermeasure.name} -- {rec.rationale}")
-                sources.append(AgentSource(domain_id=domain_id, kind="countermeasure"))
+                sources.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="countermeasure"))
 
     lines.append(
         "\n\n_This is decision support, not a diagnosis. A human reviewer must confirm any action._"
@@ -259,7 +307,7 @@ def _compose_final_answer(
     return "\n".join(lines), sources
 
 
-def _build_initial_messages(crew_id: str, question: str, conversation_id: str | None) -> list[dict]:
+def _build_initial_messages(crew_id: str | None, question: str, conversation_id: str | None) -> list[dict]:
     """Turn prior conversation turns (if any) plus the new question into
     the initial message list for the model. Deliberately reconstructs
     prior turns as plain user/assistant text (not replayed tool-use
@@ -279,7 +327,8 @@ def _build_initial_messages(crew_id: str, question: str, conversation_id: str | 
         # follow-up question.
         for msg in prior[-MAX_HISTORY_MESSAGES:]:
             messages.append({"role": msg.role, "content": msg.content})
-    messages.append({"role": "user", "content": f"Crew member: {crew_id}\nQuestion: {question}"})
+    scope_line = f"Crew member: {crew_id}" if crew_id else "Scope: entire crew roster (fleet-wide question)"
+    messages.append({"role": "user", "content": f"{scope_line}\nQuestion: {question}"})
     return messages
 
 
@@ -301,7 +350,10 @@ def _check_rate_limit() -> None:
         )
 
 
-def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -> tuple[str, list[AgentSource], str]:
+FLEET_SENTINEL = "__fleet__"  # stand-in crew_id for conversation/logging storage on fleet-wide requests
+
+
+def run_agent(crew_id: str | None, question: str, conversation_id: str | None = None) -> tuple[str, list[AgentSource], str]:
     api_key = os.environ.get(ANTHROPIC_API_KEY_ENV_VAR)
     if not api_key:
         raise AgentError(
@@ -316,12 +368,13 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
 
     _check_rate_limit()
 
+    storage_crew_id = crew_id or FLEET_SENTINEL
     if conversation_id:
-        if not db.conversation_belongs_to_crew(conversation_id, crew_id):
-            raise AgentConversationError(f"conversation '{conversation_id}' does not exist for crew '{crew_id}'")
+        if not db.conversation_belongs_to_crew(conversation_id, storage_crew_id):
+            raise AgentConversationError(f"conversation '{conversation_id}' does not exist for crew '{storage_crew_id}'")
     else:
         conversation_id = uuid_module.uuid4().hex
-        db.create_conversation(conversation_id, crew_id)
+        db.create_conversation(conversation_id, storage_crew_id)
 
     # Load prior turns BEFORE saving this question, so history reflects
     # only what was actually discussed before now.
@@ -331,21 +384,34 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
     client = anthropic.Anthropic(api_key=api_key)
     fetched = _FetchedData()
 
-    system_prompt = (
-        "You are RofehAI's crew-health briefing assistant. You help a flight surgeon or crew "
-        "medical officer understand a crew member's health trajectory across active domains. "
-        "Use the tools to gather real, CURRENT data (call get_risk for each active domain "
-        "relevant to the question -- check list_domains first if unsure which are active) even "
-        "if similar data was discussed earlier in this conversation -- always re-fetch rather "
-        "than relying on a remembered number, since risk can change between calls. You may "
-        "refer back to what was previously discussed or suggested for context. When you have "
-        "enough information, call compose_answer to finalize -- you select which domains to "
-        "include and an opening tone, but you never write the clinical wording yourself; the "
-        "system assembles it from the real data you fetched. If the question is asking you to "
-        "recall or summarize what was already discussed (not requesting a fresh check), call "
-        "compose_answer with recall_prior_answer=true instead of fetching new data. Never state "
-        "or imply a diagnosis."
-    )
+    if crew_id:
+        system_prompt = (
+            "You are RofehAI's crew-health briefing assistant. You help a flight surgeon or crew "
+            "medical officer understand a crew member's health trajectory across active domains. "
+            "Use the tools to gather real, CURRENT data (call get_risk for each active domain "
+            "relevant to the question -- check list_domains first if unsure which are active) even "
+            "if similar data was discussed earlier in this conversation -- always re-fetch rather "
+            "than relying on a remembered number, since risk can change between calls. You may "
+            "refer back to what was previously discussed or suggested for context. When you have "
+            "enough information, call compose_answer to finalize -- you select which domains to "
+            "include and an opening tone, but you never write the clinical wording yourself; the "
+            "system assembles it from the real data you fetched. If the question is asking you to "
+            "recall or summarize what was already discussed (not requesting a fresh check), call "
+            "compose_answer with recall_prior_answer=true instead of fetching new data. Never state "
+            "or imply a diagnosis."
+        )
+    else:
+        system_prompt = (
+            "You are RofehAI's crew-health briefing assistant, answering a FLEET-WIDE question "
+            "across the entire crew roster (e.g. 'who needs review today?'). Call list_crew first "
+            "to get the real roster, then call get_risk (passing the specific crew_id each time) "
+            "for each crew member across the active domains relevant to the question -- check "
+            "list_domains if unsure which are active. Prioritize crew members with the highest or "
+            "fastest-rising risk first. When you have enough information, call compose_answer with "
+            "one section per (crew_id, domain_id) you actually checked, in priority order -- you "
+            "never write the clinical wording yourself; the system assembles it from the real data "
+            "you fetched. Never state or imply a diagnosis."
+        )
 
     answer = None
     sources: list[AgentSource] = []
@@ -387,5 +453,5 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
         answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id)
 
     db.save_agent_message(conversation_id, "assistant", answer)
-    db.log_agent_call(crew_id, conversation_id, len(question), tool_calls_made, used_recall)
+    db.log_agent_call(storage_crew_id, conversation_id, len(question), tool_calls_made, used_recall)
     return answer, sources, conversation_id

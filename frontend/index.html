@@ -42,6 +42,19 @@
       <aside class="roster" aria-label="Crew roster">
         <div class="roster-heading">Crew</div>
         <ul class="roster-list" id="roster-list"><!-- populated by app.js --></ul>
+
+        <div style="padding: 16px 20px; border-top: 1px solid var(--border); margin-top: 8px;">
+          <div class="roster-heading" style="padding: 0 0 8px;">Fleet-wide triage</div>
+          <div style="font-size: 11px; color: var(--text-3); margin-bottom: 10px; line-height: 1.5;">
+            Ask about the whole roster at once — e.g. "who needs review today?"
+          </div>
+          <div id="fleet-chat-log" style="display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto; margin-bottom:10px;"></div>
+          <form id="fleet-chat-form" style="display:flex; flex-direction:column; gap:6px;">
+            <input id="fleet-chat-input" type="text" placeholder="who needs review today?"
+              style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text-1); padding:8px 10px; font-size:12px;" />
+            <button class="btn is-primary" type="submit" id="fleet-chat-send" style="font-size:12px; padding:7px;">Ask about crew</button>
+          </form>
+        </div>
       </aside>
 
       <main class="detail" id="detail-panel">

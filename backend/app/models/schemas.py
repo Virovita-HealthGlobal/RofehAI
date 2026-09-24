@@ -136,7 +136,9 @@ class DomainInfo(BaseModel):
 
 
 class AgentAskRequest(BaseModel):
-    crew_id: str
+    crew_id: Optional[str] = Field(
+        None, description="Omit for a fleet-wide question across the whole crew roster (use case 3)."
+    )
     question: str = Field(..., min_length=1, max_length=1000)
     conversation_id: Optional[str] = Field(
         None, description="Continue an existing conversation thread. Omit to start a new one."
@@ -148,12 +150,13 @@ class AgentSource(BaseModel):
     included so the answer is auditable back to an actual RiskOutput or
     countermeasure, not just trusted at face value."""
 
+    crew_id: str
     domain_id: str
     kind: str  # "risk" | "countermeasure"
 
 
 class AgentAskResponse(BaseModel):
-    crew_id: str
+    crew_id: Optional[str] = None
     question: str
     answer: str
     sources: list[AgentSource]

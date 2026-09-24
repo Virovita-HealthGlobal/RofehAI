@@ -44,11 +44,11 @@ def test_compose_answer_uses_real_narrative_verbatim():
     """The included text must be exactly the real RiskOutput.narrative,
     not something the model composed."""
     fetched = _real_fetched_data("crew-01", "sans")
-    real_narrative = fetched.risks["sans"].narrative
+    real_narrative = fetched.risks[("crew-01", "sans")].narrative
     tool_input = {"opening_tone": "one_or_more_elevated", "sections": [{"domain_id": "sans"}]}
     answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched)
     assert real_narrative in answer
-    assert sources == [agent.AgentSource(domain_id="sans", kind="risk")]
+    assert sources == [agent.AgentSource(crew_id="crew-01", domain_id="sans", kind="risk")]
 
 
 def test_compose_answer_rejects_invalid_opening_tone():
@@ -326,6 +326,113 @@ def test_rate_limit_endpoint_returns_429(monkeypatch):
         client = TestClient(app)
         r = client.post("/api/agent/ask", json={"crew_id": "crew-01", "question": "status?"})
         assert r.status_code == 429
+    finally:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv(agent.DAILY_CALL_LIMIT_ENV_VAR, raising=False)
+
+
+# --- Fleet-wide triage tests (use case 3) ----------------------------------
+
+def test_resolve_crew_id_ignores_tool_input_when_bound_crew_id_set():
+    """Access-control guarantee: a single-crew-member request cannot be
+    tricked into reading a different crew member's data by putting a
+    different crew_id in a tool call."""
+    resolved = agent._resolve_crew_id({"crew_id": "crew-02"}, bound_crew_id="crew-01")
+    assert resolved == "crew-01"  # bound value wins, tool_input's crew-02 is ignored
+
+
+def test_resolve_crew_id_uses_tool_input_in_fleet_mode():
+    resolved = agent._resolve_crew_id({"crew_id": "crew-03"}, bound_crew_id=None)
+    assert resolved == "crew-03"
+
+
+def test_resolve_crew_id_rejects_unknown_crew_in_fleet_mode():
+    try:
+        agent._resolve_crew_id({"crew_id": "not-a-real-crew-member"}, bound_crew_id=None)
+        assert False, "expected AgentError"
+    except agent.AgentError:
+        pass
+
+
+def test_resolve_crew_id_rejects_missing_crew_id_in_fleet_mode():
+    try:
+        agent._resolve_crew_id({}, bound_crew_id=None)
+        assert False, "expected AgentError"
+    except agent.AgentError:
+        pass
+
+
+def test_fleet_execute_tool_fetches_correct_crew_member():
+    """In fleet mode, get_risk for two different crew members must return
+    genuinely different, correct data -- not both defaulting to the same
+    person."""
+    fetched = agent._FetchedData()
+    result_01 = agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "sans"}, None, fetched)
+    result_04 = agent._execute_tool("get_risk", {"crew_id": "crew-04", "domain_id": "sans"}, None, fetched)
+    assert result_01["crew_id"] == "crew-01"
+    assert result_04["crew_id"] == "crew-04"
+    # crew-01 has high SANS susceptibility, crew-04 low, in the synthetic profiles --
+    # real different data, not a coincidence of both being fetched the same way.
+    assert result_01["current_risk"] != result_04["current_risk"]
+    assert ("crew-01", "sans") in fetched.risks
+    assert ("crew-04", "sans") in fetched.risks
+
+
+def test_fleet_compose_answer_groups_by_crew_member():
+    """A fleet-wide answer spanning two crew members must clearly separate
+    them (a real usability requirement for triage), and cite sources for
+    both, not just one."""
+    fetched = agent._FetchedData()
+    agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "sans"}, None, fetched)
+    agent._execute_tool("get_risk", {"crew_id": "crew-04", "domain_id": "sans"}, None, fetched)
+
+    tool_input = {
+        "opening_tone": "one_or_more_elevated",
+        "sections": [
+            {"crew_id": "crew-01", "domain_id": "sans"},
+            {"crew_id": "crew-04", "domain_id": "sans"},
+        ],
+    }
+    answer, sources = agent._compose_final_answer(None, tool_input, fetched)
+
+    assert "A. Mendez" in answer  # crew-01's real name, from the actual roster
+    assert "R. Kessler" in answer  # crew-04's real name
+    assert len(sources) == 2
+    assert {s.crew_id for s in sources} == {"crew-01", "crew-04"}
+
+
+def test_fleet_compose_answer_skips_section_with_unfetched_crew_domain_pair():
+    """The model claims a section for crew-02, but only crew-01 was ever
+    fetched -- must be silently dropped, not fabricated."""
+    fetched = agent._FetchedData()
+    agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "sans"}, None, fetched)
+
+    tool_input = {
+        "opening_tone": "one_or_more_elevated",
+        "sections": [
+            {"crew_id": "crew-01", "domain_id": "sans"},
+            {"crew_id": "crew-02", "domain_id": "sans"},  # never fetched
+        ],
+    }
+    answer, sources = agent._compose_final_answer(None, tool_input, fetched)
+    assert len(sources) == 1
+    assert sources[0].crew_id == "crew-01"
+
+
+def test_agent_ask_endpoint_accepts_fleet_wide_request_without_crew_id(monkeypatch):
+    """A request with no crew_id at all must be accepted (not rejected as
+    'unknown crew_id') and routed into fleet mode."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-dummy-not-real")
+    monkeypatch.setenv(agent.DAILY_CALL_LIMIT_ENV_VAR, "0")  # force a clean, fast 429 -- no real network call
+    try:
+        client = TestClient(app)
+        r = client.post("/api/agent/ask", json={"question": "who needs review today?"})
+        # Must NOT be a 404 (unknown crew_id) -- the only valid outcomes here
+        # are 429 (our forced rate limit) or 503 (no real key), never 404.
+        assert r.status_code in (429, 503)
     finally:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv(agent.DAILY_CALL_LIMIT_ENV_VAR, raising=False)

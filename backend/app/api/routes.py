@@ -116,7 +116,7 @@ def get_countermeasure(crew_id: str, domain_id: str, mission_day: int = MISSION_
 
 @router.post("/agent/ask", response_model=AgentAskResponse)
 def agent_ask(payload: AgentAskRequest):
-    if payload.crew_id not in _KNOWN_CREW_IDS:
+    if payload.crew_id is not None and payload.crew_id not in _KNOWN_CREW_IDS:
         raise HTTPException(status_code=404, detail=f"Unknown crew_id '{payload.crew_id}'")
     try:
         answer, sources, conversation_id = agent_core.run_agent(payload.crew_id, payload.question, payload.conversation_id)

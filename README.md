@@ -193,6 +193,14 @@ validated by an actual flight surgeon.
 - **Countermeasure suggestions** — never auto-applied; a person reviews
   and explicitly logs when one is used, which is what closes the
   learning loop back into that person's own model
+- **"Ask the briefing agent"** — a per-crew-member chat panel calling
+  the agent described above, with its own persistent conversation
+- **"Fleet-wide triage"** (sidebar) — a separate chat thread for
+  crew-id-less questions like "who needs review today?"
+- **"Clinical alerts"** (sidebar) — comms link status/toggle, a manual
+  sweep trigger, and a live pending-alert count badge; "View alerts"
+  opens the full evidence-package list with the acknowledge flow — see
+  the Clinical Relay section above
 
 ## Regulatory positioning (read this if you're extending the API)
 
@@ -250,6 +258,12 @@ Added on top of the initial reference implementation, still well short of
   Postgres 16 instance (table creation, insert via the API, and an
   independent `SELECT` confirming the rows), not just assumed to work
   because the ORM supports it in theory.
+
+- **Chart.js is vendored locally** (`frontend/js/vendor/chart.umd.js`)
+  rather than loaded from a CDN — an early deployment had the dashboard's
+  trend chart silently fail to render for some visitors because their
+  browser/network blocked the external CDN script. Self-hosting removes
+  that failure mode entirely for every future visitor.
   **Breaking schema change (multi-domain refactor):** observations are now
   stored as a JSON `signals` column instead of one hardcoded SQL column
   per signal, matching the generalized `Observation.signals` schema. Any
@@ -280,7 +294,8 @@ Added on top of the initial reference implementation, still well short of
   this before sharing the link), no individual accounts, and the
   check is only as strong as keeping that one passcode private. Real,
   per-user accounts (individual credentials, sessions, roles) are a
-  separate, larger piece of work — see Roadmap.
+  separate, larger piece of work — see Roadmap. A "Sign out" link in the
+  dashboard header clears the session flag and returns to the gate.
 
 ## Disclaimers
 

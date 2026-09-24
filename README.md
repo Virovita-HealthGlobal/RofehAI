@@ -79,6 +79,49 @@ Note: the containerized frontend still points at `http://localhost:8000`
 by default (see `frontend/js/config.js`); adjust for your deployment
 target (e.g. a real `api.rofehai.com`) before shipping.
 
+## Briefing agent (`POST /api/agent/ask`)
+
+An LLM (Claude) that reasons across a crew member's active health domains
+and produces a single, cited briefing — instead of clicking through
+separate risk cards one at a time. It has genuine multi-step tool use
+(it decides which domains to check) and persistent memory (a
+`conversation_id` lets a follow-up question like "did the countermeasure
+help?" reference what was discussed before, without re-stating context).
+
+**The safety design, in one sentence:** the model never writes the final
+clinical text itself — it can only select which already-fetched
+`RiskOutput`/`Countermeasure` data to include, and the backend assembles
+the actual sentences deterministically. See the module docstring in
+`backend/app/core/agent.py` for the full reasoning, and
+`backend/tests/test_agent.py` for the adversarial tests that verify it
+(fabricated domains, invalid tone injection, and a real end-to-end
+persistent-memory round trip are all covered).
+
+**Requires `ANTHROPIC_API_KEY`** (see `.env.example`) — without it, this
+one endpoint returns 503; everything else in RofehAI runs fine without
+it.
+
+**Cost/abuse controls**, since every call spends real money against your
+Anthropic account:
+- A global daily call cap (`ROFEHAI_AGENT_DAILY_LIMIT`, default 100) —
+  once reached, the endpoint returns 429 until the next day. This is a
+  blunt instrument (global, not per-user), appropriate for a shared-
+  passcode demo — real per-user quotas need real accounts, which don't
+  exist yet (see Roadmap).
+- Conversation history is capped to the most recent `MAX_HISTORY_MESSAGES`
+  (20) turns per call, so a long-running conversation doesn't grow the
+  request (and cost) unboundedly.
+- Every call is logged (`GET /api/agent/usage`) with crew ID, question
+  length, how many tools were called, and whether memory recall was
+  used — real observability, not just "hope it's fine." Logs metadata
+  only, not conversation content.
+
+**What's still missing**, stated plainly: no per-user auth (the shared
+gate passcode is the only access control), no systematic testing of the
+model's live behavior beyond the cases in `test_agent.py` and manual
+spot-checks, no monitoring/alerting on top of the usage log. See
+`docs/ARCHITECTURE.md` for the honest production-readiness assessment.
+
 ## What the dashboard shows
 
 - **Crew roster** with a live risk-status indicator per person

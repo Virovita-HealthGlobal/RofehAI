@@ -122,11 +122,32 @@ def agent_ask(payload: AgentAskRequest):
         answer, sources, conversation_id = agent_core.run_agent(payload.crew_id, payload.question, payload.conversation_id)
     except agent_core.AgentConversationError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except agent_core.AgentRateLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except agent_core.AgentError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return AgentAskResponse(
         crew_id=payload.crew_id, question=payload.question, answer=answer, sources=sources, conversation_id=conversation_id
     )
+
+
+@router.get("/agent/usage")
+def agent_usage(limit: int = 50):
+    """Basic observability into what the agent has actually been asked
+    and how it behaved -- real logging, not just 'hope it's fine'. Does
+    NOT return conversation content, only call metadata."""
+    calls = db.recent_agent_calls(limit)
+    return [
+        {
+            "crew_id": c.crew_id,
+            "conversation_id": c.conversation_id,
+            "question_length": c.question_length,
+            "tool_calls_made": c.tool_calls_made,
+            "used_recall": c.used_recall,
+            "created_at": c.created_at.isoformat(),
+        }
+        for c in calls
+    ]
 
 
 @router.post("/countermeasures/log")

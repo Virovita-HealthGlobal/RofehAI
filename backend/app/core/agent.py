@@ -52,6 +52,9 @@ from app.models.schemas import AgentSource, CountermeasureRecommendation, RiskOu
 ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY"
 AGENT_MODEL = "claude-sonnet-4-6"
 MAX_TOOL_TURNS = 6
+MAX_HISTORY_MESSAGES = 20  # caps unbounded conversation growth -- see AgentRateLimitError below
+DAILY_CALL_LIMIT_ENV_VAR = "ROFEHAI_AGENT_DAILY_LIMIT"
+DEFAULT_DAILY_CALL_LIMIT = 100  # global cap across all crew members -- real $ per call
 
 # Fixed, pre-written opening sentences -- the ONLY "tone" content the
 # model can select, by enum value, never by typing new text.
@@ -163,6 +166,13 @@ class AgentConversationError(AgentError):
     pass
 
 
+class AgentRateLimitError(AgentError):
+    """The global daily call cap (real $ per call against the Anthropic
+    account) has been reached -- maps to 429, not 503. See
+    DAILY_CALL_LIMIT_ENV_VAR / DEFAULT_DAILY_CALL_LIMIT."""
+    pass
+
+
 def _execute_tool(name: str, tool_input: dict, crew_id: str, fetched: _FetchedData) -> dict:
     if name == "list_domains":
         return {"domains": [{"id": d.id, "display_name": d.display_name, "status": d.status} for d in all_domains()]}
@@ -262,10 +272,33 @@ def _build_initial_messages(crew_id: str, question: str, conversation_id: str | 
     if conversation_id:
         import app.core.db as db_module
 
-        for msg in db_module.load_agent_messages(conversation_id):
+        prior = db_module.load_agent_messages(conversation_id)
+        # Cap history so a long-running conversation doesn't grow the
+        # request (and therefore the token cost) unboundedly forever --
+        # keep the most recent turns, since those are most relevant to a
+        # follow-up question.
+        for msg in prior[-MAX_HISTORY_MESSAGES:]:
             messages.append({"role": msg.role, "content": msg.content})
     messages.append({"role": "user", "content": f"Crew member: {crew_id}\nQuestion: {question}"})
     return messages
+
+
+def _check_rate_limit() -> None:
+    """Raises AgentRateLimitError if the global daily call cap has been
+    reached. Extracted as its own function (rather than inlined in
+    run_agent) so the env-var parsing can be tested directly without
+    needing a real Anthropic client/network call."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.core import db
+
+    daily_limit = int(os.environ.get(DAILY_CALL_LIMIT_ENV_VAR) or DEFAULT_DAILY_CALL_LIMIT)
+    calls_today = db.count_agent_calls_since(datetime.now(UTC) - timedelta(hours=24))
+    if calls_today >= daily_limit:
+        raise AgentRateLimitError(
+            f"Daily agent call limit ({daily_limit}) reached. This protects against unbounded "
+            f"API cost -- set {DAILY_CALL_LIMIT_ENV_VAR} to change it, or try again later."
+        )
 
 
 def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -> tuple[str, list[AgentSource], str]:
@@ -280,6 +313,8 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
     import uuid as uuid_module
 
     from app.core import db
+
+    _check_rate_limit()
 
     if conversation_id:
         if not db.conversation_belongs_to_crew(conversation_id, crew_id):
@@ -314,6 +349,8 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
 
     answer = None
     sources: list[AgentSource] = []
+    tool_calls_made = 0
+    used_recall = False
     for _ in range(MAX_TOOL_TURNS):
         response = client.messages.create(
             model=AGENT_MODEL,
@@ -332,6 +369,7 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
 
         compose_call = next((t for t in tool_uses if t.name == "compose_answer"), None)
         if compose_call:
+            used_recall = bool(compose_call.input.get("recall_prior_answer"))
             answer, sources = _compose_final_answer(crew_id, compose_call.input, fetched, conversation_id)
             break
 
@@ -339,6 +377,7 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
         for t in tool_uses:
             try:
                 result = _execute_tool(t.name, t.input, crew_id, fetched)
+                tool_calls_made += 1
             except AgentError as e:
                 result = {"error": str(e)}
             tool_results.append({"type": "tool_result", "tool_use_id": t.id, "content": str(result)})
@@ -348,4 +387,5 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
         answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id)
 
     db.save_agent_message(conversation_id, "assistant", answer)
+    db.log_agent_call(crew_id, conversation_id, len(question), tool_calls_made, used_recall)
     return answer, sources, conversation_id

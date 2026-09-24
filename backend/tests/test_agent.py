@@ -223,3 +223,109 @@ def test_recall_prior_answer_with_no_history_falls_back_safely():
     tool_input = {"recall_prior_answer": True}
     answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched, conversation_id=None)
     assert answer.startswith(agent.OPENING_TONES["insufficient_data"])
+
+
+# --- Rate limiting, history cap, and call logging tests -------------------
+
+def test_build_initial_messages_caps_history_length():
+    """A very long conversation must not grow the request (and therefore
+    token cost) unboundedly -- only the most recent MAX_HISTORY_MESSAGES
+    turns should be included."""
+    from app.core import db
+    import uuid
+
+    conversation_id = uuid.uuid4().hex
+    db.create_conversation(conversation_id, "crew-01")
+    # Save far more turns than the cap.
+    for i in range(agent.MAX_HISTORY_MESSAGES + 10):
+        db.save_agent_message(conversation_id, "user" if i % 2 == 0 else "assistant", f"turn {i}")
+
+    messages = agent._build_initial_messages("crew-01", "new question", conversation_id)
+
+    # +1 for the new question itself.
+    assert len(messages) == agent.MAX_HISTORY_MESSAGES + 1
+    # The included history must be the MOST RECENT turns, not the oldest.
+    assert "turn " in messages[0]["content"]
+    included_turn_numbers = [int(m["content"].split()[-1]) for m in messages[:-1]]
+    assert min(included_turn_numbers) >= 10  # oldest 10 turns were correctly dropped
+
+
+def test_agent_call_logging_records_real_metadata():
+    """log_agent_call must actually persist retrievable, accurate rows --
+    this is what real observability depends on, not just 'we call the
+    function somewhere'."""
+    from app.core import db
+    import uuid
+
+    conversation_id = uuid.uuid4().hex
+    db.create_conversation(conversation_id, "crew-03")
+    db.log_agent_call("crew-03", conversation_id, question_length=42, tool_calls_made=3, used_recall=False)
+
+    recent = db.recent_agent_calls(limit=5)
+    matching = [c for c in recent if c.conversation_id == conversation_id]
+    assert len(matching) == 1
+    assert matching[0].crew_id == "crew-03"
+    assert matching[0].question_length == 42
+    assert matching[0].tool_calls_made == 3
+    assert matching[0].used_recall is False
+
+
+def test_agent_usage_endpoint_returns_logged_calls():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.core import db
+    import uuid
+
+    conversation_id = uuid.uuid4().hex
+    db.create_conversation(conversation_id, "crew-04")
+    db.log_agent_call("crew-04", conversation_id, question_length=10, tool_calls_made=1, used_recall=True)
+
+    client = TestClient(app)
+    r = client.get("/api/agent/usage", params={"limit": 5})
+    assert r.status_code == 200
+    body = r.json()
+    assert any(c["conversation_id"] == conversation_id for c in body)
+
+
+def test_rate_limit_blocks_once_daily_cap_reached(monkeypatch):
+    """The core protection: once the global daily call count reaches the
+    configured limit, the check must refuse -- verified by setting the
+    limit to 0 (already 'reached') and confirming AgentRateLimitError
+    fires. Tests _check_rate_limit() directly, no network call needed."""
+    monkeypatch.setenv(agent.DAILY_CALL_LIMIT_ENV_VAR, "0")
+    try:
+        try:
+            agent._check_rate_limit()
+            assert False, "expected AgentRateLimitError"
+        except agent.AgentRateLimitError:
+            pass
+    finally:
+        monkeypatch.delenv(agent.DAILY_CALL_LIMIT_ENV_VAR, raising=False)
+
+
+def test_rate_limit_falls_back_to_default_when_env_var_is_empty_string(monkeypatch):
+    """Regression test for the same empty-string env var class of bug
+    fixed earlier in db.py/routes.py (docker-compose's ${VAR:-} sets an
+    empty string rather than leaving the var unset). int('') would crash
+    -- must fall back to DEFAULT_DAILY_CALL_LIMIT instead. Tests
+    _check_rate_limit() directly, no network call involved."""
+    monkeypatch.setenv(agent.DAILY_CALL_LIMIT_ENV_VAR, "")
+    try:
+        agent._check_rate_limit()  # must not raise ValueError from int('')
+    finally:
+        monkeypatch.delenv(agent.DAILY_CALL_LIMIT_ENV_VAR, raising=False)
+
+
+def test_rate_limit_endpoint_returns_429(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-dummy-not-real")
+    monkeypatch.setenv(agent.DAILY_CALL_LIMIT_ENV_VAR, "0")
+    try:
+        client = TestClient(app)
+        r = client.post("/api/agent/ask", json={"crew_id": "crew-01", "question": "status?"})
+        assert r.status_code == 429
+    finally:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv(agent.DAILY_CALL_LIMIT_ENV_VAR, raising=False)

@@ -65,6 +65,23 @@ class AgentMessage(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class AgentCallLog(SQLModel, table=True):
+    """One row per /api/agent/ask call. Serves two purposes: real
+    observability into what the agent is actually doing in production
+    (not just 'hope it's fine'), and the source of truth for the daily
+    rate limit -- since every call costs real money against the
+    Anthropic account, this is a global cap across all crew members, not
+    per-crew, because that's how the cost is actually incurred."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    crew_id: str = Field(index=True)
+    conversation_id: str
+    question_length: int
+    tool_calls_made: int
+    used_recall: bool
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
 
@@ -151,3 +168,32 @@ def load_agent_messages(conversation_id: str):
     with Session(engine) as session:
         stmt = select(AgentMessage).where(AgentMessage.conversation_id == conversation_id)
         return session.exec(stmt.order_by(AgentMessage.created_at)).all()
+
+
+def log_agent_call(crew_id: str, conversation_id: str, question_length: int, tool_calls_made: int, used_recall: bool) -> None:
+    with Session(engine) as session:
+        session.add(
+            AgentCallLog(
+                crew_id=crew_id,
+                conversation_id=conversation_id,
+                question_length=question_length,
+                tool_calls_made=tool_calls_made,
+                used_recall=used_recall,
+            )
+        )
+        session.commit()
+
+
+def count_agent_calls_since(since: datetime) -> int:
+    """Global call count since a given time -- the rate-limit check reads
+    this because API cost is incurred per call regardless of which crew
+    member it's about."""
+    with Session(engine) as session:
+        stmt = select(AgentCallLog).where(AgentCallLog.created_at >= since)
+        return len(session.exec(stmt).all())
+
+
+def recent_agent_calls(limit: int = 50):
+    with Session(engine) as session:
+        stmt = select(AgentCallLog).order_by(AgentCallLog.created_at.desc()).limit(limit)
+        return session.exec(stmt).all()

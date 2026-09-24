@@ -85,6 +85,21 @@ def test_gate_check_custom_code(monkeypatch):
         monkeypatch.delenv("ROFEHAI_GATE_CODE", raising=False)
 
 
+def test_gate_check_falls_back_to_default_when_env_var_is_empty_string(monkeypatch):
+    """Regression test: docker-compose's `${VAR:-}` substitution sets an
+    env var to an empty string when unset in .env, rather than leaving it
+    absent. os.environ.get(VAR, default) does NOT fall back on an empty
+    string (only on a missing key), which broke this in production -- see
+    the matching fix in db.py's DATABASE_URL. Empty string must behave
+    the same as unset."""
+    monkeypatch.setenv("ROFEHAI_GATE_CODE", "")
+    try:
+        r = client.post("/api/gate/check", json={"code": "rofehai-preview-2026"})
+        assert r.status_code == 200
+    finally:
+        monkeypatch.delenv("ROFEHAI_GATE_CODE", raising=False)
+
+
 def test_api_key_enforced_when_configured(monkeypatch):
     monkeypatch.setenv("ROFEHAI_API_KEY", "test-secret")
     try:

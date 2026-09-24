@@ -35,7 +35,7 @@ DEFAULT_GATE_CODE = "rofehai-preview-2026"  # change via ROFEHAI_GATE_CODE befor
 
 @router.post("/gate/check")
 def gate_check(payload: dict):
-    configured = os.environ.get(GATE_CODE_ENV_VAR, DEFAULT_GATE_CODE)
+    configured = os.environ.get(GATE_CODE_ENV_VAR) or DEFAULT_GATE_CODE
     submitted = (payload or {}).get("code", "")
     if submitted != configured:
         raise HTTPException(status_code=401, detail="Incorrect access code")

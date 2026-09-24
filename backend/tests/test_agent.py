@@ -188,3 +188,38 @@ def test_agent_ask_endpoint_rejects_conversation_id_for_wrong_crew(monkeypatch):
         assert r.status_code == 404
     finally:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+
+def test_recall_prior_answer_re_serves_the_previous_assistant_turn():
+    """Regression test for a real gap found in live testing: a follow-up
+    question like 'what did we just discuss?' isn't a request for fresh
+    risk data, so compose_answer's normal section-based assembly has
+    nothing to work with. recall_prior_answer must safely re-serve the
+    conversation's own previous answer (already vetted through the same
+    deterministic assembly) rather than falling back to a generic
+    'insufficient data' non-answer."""
+    from app.core import db
+    import uuid
+
+    conversation_id = uuid.uuid4().hex
+    db.create_conversation(conversation_id, "crew-01")
+    db.save_agent_message(conversation_id, "user", "how is crew-01 trending on SANS?")
+    db.save_agent_message(conversation_id, "assistant", "SANS risk is 99% and rising. Suggested: LBNP sessions.")
+
+    fetched = agent._FetchedData()
+    tool_input = {"recall_prior_answer": True}
+    answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched, conversation_id)
+
+    assert "SANS risk is 99% and rising" in answer
+    assert sources == []  # nothing newly fetched this turn -- it's a pure recall
+
+
+def test_recall_prior_answer_with_no_history_falls_back_safely():
+    """If recall is requested but there's genuinely nothing to recall yet
+    (e.g. a bug called it on a brand-new conversation), fail safe to the
+    normal insufficient-data path rather than erroring or returning
+    something empty/confusing."""
+    fetched = agent._FetchedData()
+    tool_input = {"recall_prior_answer": True}
+    answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched, conversation_id=None)
+    assert answer.startswith(agent.OPENING_TONES["insufficient_data"])

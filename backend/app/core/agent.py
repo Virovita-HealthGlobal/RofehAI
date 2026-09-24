@@ -103,15 +103,24 @@ TOOLS = [
             "you only choose which previously-fetched domain sections to include, in what "
             "order, and one opening tone. The system assembles the actual wording from the "
             "real data you already fetched with get_risk/get_countermeasure. Only reference "
-            "domain_ids you already called get_risk on in this conversation."
+            "domain_ids you already called get_risk on in this conversation. "
+            "If the question is about what was previously discussed or concluded (e.g. 'what "
+            "did we just discuss?', 'did the countermeasure work?') rather than a request for "
+            "a fresh risk check, set recall_prior_answer=true instead of fetching new data -- "
+            "this safely re-serves your own most recent answer in this conversation, which was "
+            "already assembled the same safe way."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
+                "recall_prior_answer": {
+                    "type": "boolean",
+                    "description": "Set true for a recall/follow-up question about prior turns instead of a fresh data request. When true, sections/opening_tone are ignored.",
+                },
                 "opening_tone": {
                     "type": "string",
                     "enum": list(OPENING_TONES.keys()),
-                    "description": "Pick based on what you found: all nominal, one or more elevated, or insufficient data.",
+                    "description": "Pick based on what you found: all nominal, one or more elevated, or insufficient data. Ignored if recall_prior_answer is true.",
                 },
                 "sections": {
                     "type": "array",
@@ -123,10 +132,10 @@ TOOLS = [
                         },
                         "required": ["domain_id"],
                     },
-                    "description": "Domains to include in the briefing, in the order they should appear.",
+                    "description": "Domains to include in the briefing, in the order they should appear. Ignored if recall_prior_answer is true.",
                 },
             },
-            "required": ["opening_tone", "sections"],
+            "required": [],
         },
     },
 ]
@@ -186,11 +195,24 @@ def _execute_tool(name: str, tool_input: dict, crew_id: str, fetched: _FetchedDa
     raise AgentError(f"unknown tool '{name}'")
 
 
-def _compose_final_answer(crew_id: str, tool_input: dict, fetched: _FetchedData) -> tuple[str, list[AgentSource]]:
+def _compose_final_answer(
+    crew_id: str, tool_input: dict, fetched: _FetchedData, conversation_id: str | None = None
+) -> tuple[str, list[AgentSource]]:
     """The ONE place the final answer text is assembled. Every sentence
-    here is either a fixed constant (OPENING_TONES) or copied verbatim
-    from a real RiskOutput/CountermeasureRecommendation already fetched
-    -- never text the model typed. See module docstring."""
+    here is either a fixed constant (OPENING_TONES), copied verbatim from
+    a real RiskOutput/CountermeasureRecommendation already fetched, or --
+    for a recall_prior_answer request -- the agent's own most recent
+    answer in this same conversation, which was already assembled the
+    same safe way. Never text the model typed fresh. See module docstring."""
+    if tool_input.get("recall_prior_answer") and conversation_id:
+        from app.core import db
+
+        prior_assistant_turns = [m for m in db.load_agent_messages(conversation_id) if m.role == "assistant"]
+        if prior_assistant_turns:
+            most_recent = prior_assistant_turns[-1].content
+            return f"(Recalling the previous answer in this conversation.)\n\n{most_recent}", []
+        # Nothing to recall yet -- fall through to the normal insufficient-data path below.
+
     tone = tool_input.get("opening_tone")
     if tone not in OPENING_TONES:
         tone = "insufficient_data"
@@ -284,7 +306,10 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
         "refer back to what was previously discussed or suggested for context. When you have "
         "enough information, call compose_answer to finalize -- you select which domains to "
         "include and an opening tone, but you never write the clinical wording yourself; the "
-        "system assembles it from the real data you fetched. Never state or imply a diagnosis."
+        "system assembles it from the real data you fetched. If the question is asking you to "
+        "recall or summarize what was already discussed (not requesting a fresh check), call "
+        "compose_answer with recall_prior_answer=true instead of fetching new data. Never state "
+        "or imply a diagnosis."
     )
 
     answer = None
@@ -300,14 +325,14 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
 
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         if not tool_uses:
-            answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched)
+            answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id)
             break
 
         messages.append({"role": "assistant", "content": response.content})
 
         compose_call = next((t for t in tool_uses if t.name == "compose_answer"), None)
         if compose_call:
-            answer, sources = _compose_final_answer(crew_id, compose_call.input, fetched)
+            answer, sources = _compose_final_answer(crew_id, compose_call.input, fetched, conversation_id)
             break
 
         tool_results = []
@@ -320,7 +345,7 @@ def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -
         messages.append({"role": "user", "content": tool_results})
     else:
         # Ran out of turns without the model finalizing -- fail safe, not open-ended.
-        answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched)
+        answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id)
 
     db.save_agent_message(conversation_id, "assistant", answer)
     return answer, sources, conversation_id

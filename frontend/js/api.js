@@ -28,5 +28,13 @@ window.RofehAPI = (() => {
     logCountermeasure: (entry) => post("/countermeasures/log", entry),
     askAgent: (crewId, question, conversationId) =>
       post("/agent/ask", { crew_id: crewId || null, question, conversation_id: conversationId || null }),
+    // Clinical relay & response
+    runMonitoringCheck: () => post("/monitoring/check", {}),
+    listAlerts: (status) => get(`/alerts${status ? `?status=${status}` : ""}`),
+    getAlert: (id) => get(`/alerts/${id}`),
+    acknowledgeAlert: (id, note) => post(`/alerts/${id}/acknowledge`, { note: note || null }),
+    getCommsLink: () => get("/comms/link"),
+    setCommsLink: (available) => post("/comms/link", { available }),
+    getLatencyMetrics: () => get("/alerts/metrics/latency"),
   };
 })();

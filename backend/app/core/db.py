@@ -82,6 +82,66 @@ class AgentCallLog(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
 
 
+class LastKnownRiskState(SQLModel, table=True):
+    """The most recent risk state RofehAI observed for one (crew, domain)
+    pair, used purely to detect a NEW clinically significant change since
+    the last check -- monitoring.py compares each fresh score() result
+    against this to decide whether to raise an alert, rather than
+    re-alerting on every poll for an already-known elevated state."""
+
+    crew_id: str = Field(primary_key=True)
+    domain_id: str = Field(primary_key=True)
+    current_risk: float
+    is_fallback: bool
+    severity: str  # "nominal" | "moderate" | "high"
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AlertRecord(SQLModel, table=True):
+    """One clinical alert: a detected, clinically significant change in a
+    crew member's trajectory, packaged as a compact evidence package for
+    rapid clinician review -- see the Clinical Relay feature. All content
+    fields are template-assembled from real RiskOutput data (never free
+    LLM text), matching the same discipline as the agent's compose_answer.
+
+    Lifecycle timestamps back the feature's required success metrics:
+    detected_at -> queued_at (should be seconds; this IS RofehAI's actual
+    clinical-response-time contribution) -> transmitted_at (gated on the
+    simulated comms link; this bucket is the UNAVOIDABLE communication
+    latency, reported separately, not RofehAI's fault) -> acknowledged_at
+    (the human-in-the-loop clinician confirmation point)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    crew_id: str = Field(index=True)
+    domain_id: str
+    severity: str  # "moderate" | "high"
+    current_risk: float
+    risk_delta_30d: float
+    confidence: float
+    narrative: str
+    top_contributors_json: str = Field(default="[]")
+    pre_authorized_protocol_id: str | None = None
+
+    detected_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    queued_at: datetime | None = None
+    transmitted_at: datetime | None = None
+    acknowledged_at: datetime | None = None
+    acknowledged_by_note: str | None = None
+
+
+class CommsLinkState(SQLModel, table=True):
+    """Simulated Earth-spacecraft comms link status -- a stand-in toggle,
+    NOT a real radio/network simulation (there is no real spacecraft link
+    to model). Single-row table (id is always 1) so the whole system
+    shares one link state. When unavailable, alerts queue but do not
+    transmit; when toggled available, all pending alerts transmit
+    immediately in priority order. See docs/ARCHITECTURE.md."""
+
+    id: int = Field(default=1, primary_key=True)
+    available: bool = Field(default=True)
+    changed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
 
@@ -197,3 +257,165 @@ def recent_agent_calls(limit: int = 50):
     with Session(engine) as session:
         stmt = select(AgentCallLog).order_by(AgentCallLog.created_at.desc()).limit(limit)
         return session.exec(stmt).all()
+
+
+def get_last_known_state(crew_id: str, domain_id: str) -> LastKnownRiskState | None:
+    with Session(engine) as session:
+        return session.get(LastKnownRiskState, (crew_id, domain_id))
+
+
+def upsert_last_known_state(crew_id: str, domain_id: str, current_risk: float, is_fallback: bool, severity: str) -> None:
+    with Session(engine) as session:
+        existing = session.get(LastKnownRiskState, (crew_id, domain_id))
+        if existing:
+            existing.current_risk = current_risk
+            existing.is_fallback = is_fallback
+            existing.severity = severity
+            existing.checked_at = datetime.now(UTC)
+            session.add(existing)
+        else:
+            session.add(
+                LastKnownRiskState(
+                    crew_id=crew_id, domain_id=domain_id, current_risk=current_risk,
+                    is_fallback=is_fallback, severity=severity,
+                )
+            )
+        session.commit()
+
+
+def create_alert(
+    crew_id: str, domain_id: str, severity: str, current_risk: float, risk_delta_30d: float,
+    confidence: float, narrative: str, top_contributors: list[str], pre_authorized_protocol_id: str | None,
+) -> AlertRecord:
+    with Session(engine) as session:
+        alert = AlertRecord(
+            crew_id=crew_id, domain_id=domain_id, severity=severity, current_risk=current_risk,
+            risk_delta_30d=risk_delta_30d, confidence=confidence, narrative=narrative,
+            top_contributors_json=json.dumps(top_contributors),
+            pre_authorized_protocol_id=pre_authorized_protocol_id,
+        )
+        session.add(alert)
+        session.commit()
+        session.refresh(alert)
+        return alert
+
+
+def mark_alert_queued(alert_id: int) -> AlertRecord | None:
+    with Session(engine) as session:
+        alert = session.get(AlertRecord, alert_id)
+        if alert and alert.queued_at is None:
+            alert.queued_at = datetime.now(UTC)
+            session.add(alert)
+            session.commit()
+            session.refresh(alert)
+        return alert
+
+
+def get_comms_link_state() -> CommsLinkState:
+    with Session(engine) as session:
+        state = session.get(CommsLinkState, 1)
+        if state is None:
+            state = CommsLinkState(id=1, available=True)
+            session.add(state)
+            session.commit()
+            session.refresh(state)
+        return state
+
+
+def set_comms_link_available(available: bool) -> CommsLinkState:
+    with Session(engine) as session:
+        state = session.get(CommsLinkState, 1)
+        if state is None:
+            state = CommsLinkState(id=1, available=available)
+        else:
+            state.available = available
+            state.changed_at = datetime.now(UTC)
+        session.add(state)
+        session.commit()
+        session.refresh(state)
+        return state
+
+
+def transmit_pending_alerts() -> list[AlertRecord]:
+    """Transmit every queued-but-not-yet-transmitted alert, in priority
+    order (high severity first, then oldest first). Only call this when
+    the comms link is actually available -- see routes.py."""
+    with Session(engine) as session:
+        stmt = select(AlertRecord).where(
+            AlertRecord.queued_at.is_not(None), AlertRecord.transmitted_at.is_(None)
+        )
+        pending = session.exec(stmt).all()
+        severity_rank = {"high": 0, "moderate": 1}
+        pending_sorted = sorted(pending, key=lambda a: (severity_rank.get(a.severity, 2), a.queued_at))
+        now = datetime.now(UTC)
+        for alert in pending_sorted:
+            alert.transmitted_at = now
+            session.add(alert)
+        session.commit()
+        for alert in pending_sorted:
+            session.refresh(alert)
+        return pending_sorted
+
+
+def list_alerts(status: str | None = None, crew_id: str | None = None, limit: int = 100):
+    with Session(engine) as session:
+        stmt = select(AlertRecord)
+        if crew_id:
+            stmt = stmt.where(AlertRecord.crew_id == crew_id)
+        if status == "pending":
+            stmt = stmt.where(AlertRecord.transmitted_at.is_(None))
+        elif status == "transmitted":
+            stmt = stmt.where(AlertRecord.transmitted_at.is_not(None), AlertRecord.acknowledged_at.is_(None))
+        elif status == "acknowledged":
+            stmt = stmt.where(AlertRecord.acknowledged_at.is_not(None))
+        return session.exec(stmt.order_by(AlertRecord.detected_at.desc()).limit(limit)).all()
+
+
+def get_alert(alert_id: int) -> AlertRecord | None:
+    with Session(engine) as session:
+        return session.get(AlertRecord, alert_id)
+
+
+def acknowledge_alert(alert_id: int, note: str | None) -> AlertRecord | None:
+    with Session(engine) as session:
+        alert = session.get(AlertRecord, alert_id)
+        if alert is None:
+            return None
+        alert.acknowledged_at = datetime.now(UTC)
+        alert.acknowledged_by_note = note
+        session.add(alert)
+        session.commit()
+        session.refresh(alert)
+        return alert
+
+
+def alert_latency_metrics():
+    """Real, measured latency stats from actual timestamps -- see the
+    Clinical Relay feature's success metric requirement: report
+    time-to-alert (RofehAI's own processing) SEPARATELY from
+    time-to-transmit (comms latency, outside RofehAI's control)."""
+    with Session(engine) as session:
+        alerts = session.exec(select(AlertRecord)).all()
+        detection_to_queue = []
+        queue_to_transmit = []
+        transmit_to_ack = []
+        for a in alerts:
+            if a.queued_at:
+                detection_to_queue.append((a.queued_at - a.detected_at).total_seconds())
+            if a.queued_at and a.transmitted_at:
+                queue_to_transmit.append((a.transmitted_at - a.queued_at).total_seconds())
+            if a.transmitted_at and a.acknowledged_at:
+                transmit_to_ack.append((a.acknowledged_at - a.transmitted_at).total_seconds())
+
+        def _avg(vals):
+            return round(sum(vals) / len(vals), 3) if vals else None
+
+        return {
+            "total_alerts": len(alerts),
+            "avg_seconds_detection_to_alert_queued": _avg(detection_to_queue),
+            "avg_seconds_comms_latency_queue_to_transmit": _avg(queue_to_transmit),
+            "avg_seconds_transmit_to_clinician_ack": _avg(transmit_to_ack),
+            "note": "detection_to_alert_queued is RofehAI's own processing time; "
+                    "comms_latency is the unavoidable Earth-link delay, reported separately "
+                    "per the feature spec.",
+        }

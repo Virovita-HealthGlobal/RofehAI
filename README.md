@@ -134,6 +134,55 @@ model's live behavior beyond the cases in `test_agent.py` and manual
 spot-checks, no monitoring/alerting on top of the usage log. See
 `docs/ARCHITECTURE.md` for the honest production-readiness assessment.
 
+## Clinical relay & response (near-real-time alerting)
+
+`backend/app/core/monitoring.py` — a PUSH-based complement to the PULL-based
+dashboard/agent. It continuously (on-demand sweep, `POST /api/monitoring/check`)
+compares each crew member's current trajectory against their last known
+state, and raises an alert the moment a *new* clinically significant
+change is detected — crossing into an elevated severity tier, not
+re-alerting on an already-known state every sweep.
+
+**The goal is reducing clinical response latency, not physical
+communication latency** — RofehAI can't make Mars closer to Earth, but it
+can detect, package, and queue an alert within milliseconds so it's ready
+to transmit the instant a link exists, rather than waiting for a human to
+notice, interpret, and describe the problem themselves.
+
+- `POST /api/monitoring/check` — run a detection sweep now
+- `GET /api/alerts?status=pending|transmitted|acknowledged` — list alerts
+- `GET /api/alerts/{id}` — one alert's full evidence package (baseline
+  deviation, trend, confidence, severity, top contributors, and a
+  pre-authorized protocol reference if the domain has one)
+- `POST /api/alerts/{id}/acknowledge` — the human-in-the-loop point; a
+  clinician confirms review. Requires the alert to have transmitted first
+  — you cannot acknowledge something that was never sent.
+- `GET /api/comms/link` / `POST /api/comms/link {"available": bool}` —
+  the **simulated** Earth-spacecraft comms link. **Stated plainly: this is
+  a manual toggle standing in for real connectivity — there is no actual
+  radio link in this reference implementation.** While unavailable, alerts
+  queue locally; the moment it's set available, every pending alert
+  transmits immediately in priority order (highest severity first).
+- `GET /api/alerts/metrics/latency` — real, measured stats from actual
+  timestamps, reporting RofehAI's own detection-to-queue time **separately**
+  from comms latency, per the feature's own success-metric requirement.
+
+**Content discipline is identical to the rest of the platform**: every
+field in an alert is copied verbatim from a real `RiskOutput` — no free
+LLM or hand-typed text at alert time. Pre-authorized protocols are a
+fixed, reviewed-ahead-of-time catalog (see `domains.py`), explicitly
+labeled "not autonomous treatment — clinician confirmation still
+required" on every response; RofehAI never executes or auto-administers
+anything.
+
+**What's honestly not built**: a real trigger (this requires manually
+calling `/api/monitoring/check`; production would run it on a schedule or
+on new-observation events), any actual notification mechanism (push,
+SMS, radio) beyond the API surfacing "transmitted" status, and the
+`authorized_by` field on protocols is an explicit placeholder pending
+real clinical sign-off, not a claim that these protocols have been
+validated by an actual flight surgeon.
+
 ## What the dashboard shows
 
 - **Crew roster** with a live risk-status indicator per person

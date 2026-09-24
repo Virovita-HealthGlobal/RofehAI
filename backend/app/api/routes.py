@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app.core import agent as agent_core
 from app.core import countermeasures as cm
 from app.core import db
+from app.core import monitoring
 from app.core.digital_twin import registry
 from app.core.domains import DOMAIN_REGISTRY, active_domains, all_domains
 from app.core.seeding import ensure_seeded as _ensure_seeded
@@ -148,6 +149,79 @@ def agent_usage(limit: int = 50):
         }
         for c in calls
     ]
+
+
+# --- Clinical Relay & Response (near-real-time alerting) -----------------
+# See backend/app/core/monitoring.py for the detection/severity logic and
+# an honest note on what's simulated (the comms link) vs. real (detection,
+# packaging, timestamps).
+
+@router.post("/monitoring/check")
+def monitoring_check():
+    """Run a detection sweep across the whole crew roster now. In a real
+    deployment this would run on a schedule or be triggered by new
+    observation data; exposed as a manual endpoint here so it can be
+    demonstrated and tested directly."""
+    new_alerts = monitoring.run_monitoring_sweep()
+    return {"new_alerts_count": len(new_alerts), "new_alerts": new_alerts}
+
+
+@router.get("/alerts")
+def list_alerts(status: str | None = None, crew_id: str | None = None, limit: int = 100):
+    """status: 'pending' | 'transmitted' | 'acknowledged', or omit for all."""
+    alerts = db.list_alerts(status=status, crew_id=crew_id, limit=limit)
+    return [monitoring._alert_to_dict(a) for a in alerts]
+
+
+@router.get("/alerts/{alert_id}")
+def get_alert(alert_id: int):
+    alert = db.get_alert(alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail=f"Unknown alert id {alert_id}")
+    return monitoring._alert_to_dict(alert)
+
+
+@router.post("/alerts/{alert_id}/acknowledge")
+def acknowledge_alert(alert_id: int, payload: dict | None = None):
+    """The human-in-the-loop confirmation point: a clinician marks an
+    alert as reviewed. This never happens automatically."""
+    alert = db.get_alert(alert_id)
+    if alert is None:
+        raise HTTPException(status_code=404, detail=f"Unknown alert id {alert_id}")
+    if alert.transmitted_at is None:
+        raise HTTPException(status_code=400, detail="Cannot acknowledge an alert that hasn't been transmitted yet")
+    note = (payload or {}).get("note")
+    updated = db.acknowledge_alert(alert_id, note)
+    return monitoring._alert_to_dict(updated)
+
+
+@router.get("/comms/link")
+def get_comms_link():
+    state = db.get_comms_link_state()
+    return {"available": state.available, "changed_at": state.changed_at.isoformat()}
+
+
+@router.post("/comms/link")
+def set_comms_link(payload: dict):
+    """Toggle the SIMULATED comms link. When set to available=true, every
+    currently-queued alert transmits immediately, in priority order."""
+    available = bool(payload.get("available"))
+    state = db.set_comms_link_available(available)
+    transmitted = []
+    if available:
+        transmitted_records = db.transmit_pending_alerts()
+        transmitted = [monitoring._alert_to_dict(a) for a in transmitted_records]
+    return {
+        "available": state.available,
+        "changed_at": state.changed_at.isoformat(),
+        "transmitted_count": len(transmitted),
+        "transmitted": transmitted,
+    }
+
+
+@router.get("/alerts/metrics/latency")
+def alert_latency_metrics():
+    return db.alert_latency_metrics()
 
 
 @router.post("/countermeasures/log")

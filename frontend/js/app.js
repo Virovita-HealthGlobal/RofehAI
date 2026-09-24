@@ -6,6 +6,8 @@
   let placeholderDomains = []; // status === "architecture_ready"
   const conversationIdByCrew = {}; // crew_id -> conversation_id, so each crew member's thread persists while browsing
   let fleetConversationId = null; // separate conversation thread for fleet-wide (crew-id-less) questions
+  let commsLinkAvailable = true;
+  let viewingAlerts = false;
 
   const rosterList = document.getElementById("roster-list");
   const detailPanel = document.getElementById("detail-panel");
@@ -62,11 +64,15 @@
     }
 
     wireFleetChatForm();
+    wireAlertsControls();
+    refreshCommsLinkUI();
+    refreshAlertsBadge();
     if (crew.length) selectCrew(crew[0].id, crew[0].name);
   }
 
   async function selectCrew(crewId, name) {
     activeCrewId = crewId;
+    viewingAlerts = false;
     document.querySelectorAll(".roster-item").forEach((el) => {
       el.classList.toggle("is-active", el.dataset.crewId === crewId);
     });
@@ -338,6 +344,134 @@
           legend: { labels: { color: "#E8ECF6" } },
         },
       },
+    });
+  }
+
+  const SEVERITY_DOT = { high: "critical", moderate: "elevated", nominal: "nominal" };
+
+  async function refreshCommsLinkUI() {
+    const state = await RofehAPI.getCommsLink();
+    commsLinkAvailable = state.available;
+    const dot = document.getElementById("comms-link-dot");
+    const label = document.getElementById("comms-link-label");
+    if (dot) dot.className = `status-dot status-dot--${commsLinkAvailable ? "nominal" : "critical"}`;
+    if (label) label.textContent = commsLinkAvailable ? "Comms link: available" : "Comms link: SIMULATED OUTAGE";
+  }
+
+  async function refreshAlertsBadge() {
+    const pending = await RofehAPI.listAlerts("pending");
+    const badge = document.getElementById("alerts-pending-badge");
+    if (!badge) return;
+    if (pending.length > 0) {
+      badge.textContent = String(pending.length);
+      badge.style.display = "inline-block";
+    } else {
+      badge.style.display = "none";
+    }
+  }
+
+  function wireAlertsControls() {
+    const toggleBtn = document.getElementById("toggle-comms-btn");
+    const sweepBtn = document.getElementById("run-sweep-btn");
+    const viewBtn = document.getElementById("view-alerts-btn");
+
+    toggleBtn?.addEventListener("click", async () => {
+      toggleBtn.disabled = true;
+      try {
+        await RofehAPI.setCommsLink(!commsLinkAvailable);
+        await refreshCommsLinkUI();
+        await refreshAlertsBadge();
+        if (viewingAlerts) renderAlertsView();
+      } finally {
+        toggleBtn.disabled = false;
+      }
+    });
+
+    sweepBtn?.addEventListener("click", async () => {
+      sweepBtn.disabled = true;
+      sweepBtn.textContent = "Sweeping…";
+      try {
+        await RofehAPI.runMonitoringCheck();
+        await refreshAlertsBadge();
+        if (viewingAlerts) renderAlertsView();
+      } finally {
+        sweepBtn.disabled = false;
+        sweepBtn.textContent = "Run sweep";
+      }
+    });
+
+    viewBtn?.addEventListener("click", () => {
+      document.querySelectorAll(".roster-item").forEach((el) => el.classList.remove("is-active"));
+      renderAlertsView();
+    });
+  }
+
+  async function renderAlertsView() {
+    viewingAlerts = true;
+    activeCrewId = null;
+    const [pending, transmitted, acknowledged] = await Promise.all([
+      RofehAPI.listAlerts("pending"),
+      RofehAPI.listAlerts("transmitted"),
+      RofehAPI.listAlerts("acknowledged"),
+    ]);
+
+    function alertCard(a) {
+      const dot = SEVERITY_DOT[a.severity] || "nominal";
+      const protocol = a.pre_authorized_protocol;
+      return `
+        <div class="panel" style="margin-bottom:12px;">
+          <div class="panel-title">
+            <span class="status-dot status-dot--${dot}"></span>
+            ${a.crew_id} — ${a.domain_display_name} — <span style="text-transform:uppercase; font-size:10px;">${a.severity}</span>
+          </div>
+          <div class="risk-row">
+            <span class="risk-figure">${Math.round(a.current_risk * 100)}%</span>
+            <span class="risk-delta ${a.risk_delta_30d >= 0 ? "is-up" : "is-down"}">${a.risk_delta_30d >= 0 ? "+" : ""}${Math.round(a.risk_delta_30d * 100)}% / 30d</span>
+          </div>
+          <div class="risk-confidence">confidence ${a.confidence.toFixed(2)} · detected ${new Date(a.detected_at).toLocaleTimeString()}</div>
+          <div class="narrative">${a.narrative}</div>
+          ${
+            protocol
+              ? `<div class="cm-name" style="margin-top:10px;">${protocol.title}</div>
+                 <div class="cm-desc">${protocol.instructions}</div>
+                 <div class="cm-rationale" style="color:var(--status-elevated);">${protocol.disclaimer}</div>`
+              : ""
+          }
+          <div style="margin-top:10px; font-size:11px; color:var(--text-3);">
+            Status: <strong>${a.status}</strong>
+            ${a.transmitted_at ? ` · transmitted ${new Date(a.transmitted_at).toLocaleTimeString()}` : " · queued, awaiting comms link"}
+            ${a.acknowledged_at ? ` · acknowledged ${new Date(a.acknowledged_at).toLocaleTimeString()}` : ""}
+          </div>
+          ${
+            a.status === "transmitted"
+              ? `<button class="btn is-primary" style="margin-top:8px;" data-ack-alert="${a.id}">Acknowledge</button>`
+              : ""
+          }
+        </div>
+      `;
+    }
+
+    detailPanel.innerHTML = `
+      <div class="detail-heading"><h1>Clinical Alerts</h1></div>
+      <div style="margin-bottom:16px;">
+        <strong>${pending.length}</strong> pending (queued, awaiting comms) ·
+        <strong>${transmitted.length}</strong> transmitted, awaiting acknowledgment ·
+        <strong>${acknowledged.length}</strong> acknowledged
+      </div>
+      ${pending.length ? `<h3 style="font-size:13px; color:var(--text-2);">Pending</h3>${pending.map(alertCard).join("")}` : ""}
+      ${transmitted.length ? `<h3 style="font-size:13px; color:var(--text-2);">Transmitted — needs review</h3>${transmitted.map(alertCard).join("")}` : ""}
+      ${acknowledged.length ? `<h3 style="font-size:13px; color:var(--text-2);">Acknowledged</h3>${acknowledged.map(alertCard).join("")}` : ""}
+      ${!pending.length && !transmitted.length && !acknowledged.length ? `<div class="empty-state">No alerts yet — run a sweep to check for significant changes.</div>` : ""}
+    `;
+
+    document.querySelectorAll("[data-ack-alert]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "Acknowledging…";
+        await RofehAPI.acknowledgeAlert(btn.dataset.ackAlert, "Reviewed via dashboard");
+        await refreshAlertsBadge();
+        renderAlertsView();
+      });
     });
   }
 

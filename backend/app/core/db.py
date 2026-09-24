@@ -45,6 +45,26 @@ class CountermeasureLogRecord(SQLModel, table=True):
     logged_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class AgentConversation(SQLModel, table=True):
+    """One persistent conversation thread with the agent, scoped to a
+    single crew member. Messages within it give the agent real
+    continuity across separate /api/agent/ask calls (use case 2:
+    persistent memory), e.g. recalling that a countermeasure was
+    discussed two weeks ago without the caller re-stating context."""
+
+    id: str = Field(primary_key=True)  # uuid4 hex
+    crew_id: str = Field(index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AgentMessage(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    conversation_id: str = Field(index=True)
+    role: str  # "user" | "assistant"
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
 
@@ -102,3 +122,32 @@ def load_countermeasure_log(crew_id: str | None = None):
         if crew_id:
             stmt = stmt.where(CountermeasureLogRecord.crew_id == crew_id)
         return session.exec(stmt.order_by(CountermeasureLogRecord.logged_at)).all()
+
+
+def create_conversation(conversation_id: str, crew_id: str) -> None:
+    with Session(engine) as session:
+        session.add(AgentConversation(id=conversation_id, crew_id=crew_id))
+        session.commit()
+
+
+def conversation_exists(conversation_id: str) -> bool:
+    with Session(engine) as session:
+        return session.get(AgentConversation, conversation_id) is not None
+
+
+def conversation_belongs_to_crew(conversation_id: str, crew_id: str) -> bool:
+    with Session(engine) as session:
+        convo = session.get(AgentConversation, conversation_id)
+        return convo is not None and convo.crew_id == crew_id
+
+
+def save_agent_message(conversation_id: str, role: str, content: str) -> None:
+    with Session(engine) as session:
+        session.add(AgentMessage(conversation_id=conversation_id, role=role, content=content))
+        session.commit()
+
+
+def load_agent_messages(conversation_id: str):
+    with Session(engine) as session:
+        stmt = select(AgentMessage).where(AgentMessage.conversation_id == conversation_id)
+        return session.exec(stmt.order_by(AgentMessage.created_at)).all()

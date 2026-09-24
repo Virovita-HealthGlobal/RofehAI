@@ -119,10 +119,14 @@ def agent_ask(payload: AgentAskRequest):
     if payload.crew_id not in _KNOWN_CREW_IDS:
         raise HTTPException(status_code=404, detail=f"Unknown crew_id '{payload.crew_id}'")
     try:
-        answer, sources = agent_core.run_agent(payload.crew_id, payload.question)
+        answer, sources, conversation_id = agent_core.run_agent(payload.crew_id, payload.question, payload.conversation_id)
+    except agent_core.AgentConversationError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except agent_core.AgentError as e:
         raise HTTPException(status_code=503, detail=str(e))
-    return AgentAskResponse(crew_id=payload.crew_id, question=payload.question, answer=answer, sources=sources)
+    return AgentAskResponse(
+        crew_id=payload.crew_id, question=payload.question, answer=answer, sources=sources, conversation_id=conversation_id
+    )
 
 
 @router.post("/countermeasures/log")

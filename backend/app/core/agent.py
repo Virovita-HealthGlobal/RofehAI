@@ -143,6 +143,14 @@ class _FetchedData:
 
 
 class AgentError(Exception):
+    """Server-side configuration problem (e.g. missing API key) -- maps to 503."""
+    pass
+
+
+class AgentConversationError(AgentError):
+    """Client passed a conversation_id that doesn't exist or belongs to a
+    different crew member -- maps to 404, not 503, since it's a bad
+    request, not a server config problem."""
     pass
 
 
@@ -219,7 +227,26 @@ def _compose_final_answer(crew_id: str, tool_input: dict, fetched: _FetchedData)
     return "\n".join(lines), sources
 
 
-def run_agent(crew_id: str, question: str) -> tuple[str, list[AgentSource]]:
+def _build_initial_messages(crew_id: str, question: str, conversation_id: str | None) -> list[dict]:
+    """Turn prior conversation turns (if any) plus the new question into
+    the initial message list for the model. Deliberately reconstructs
+    prior turns as plain user/assistant text (not replayed tool-use
+    blocks) -- the agent re-fetches fresh data on every call rather than
+    trusting stale cached numbers, but the model can still SEE and refer
+    back to what was discussed and concluded previously. Kept as a pure
+    function (no network call) specifically so conversation continuity is
+    unit-testable without a live Anthropic API key."""
+    messages: list[dict] = []
+    if conversation_id:
+        import app.core.db as db_module
+
+        for msg in db_module.load_agent_messages(conversation_id):
+            messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": f"Crew member: {crew_id}\nQuestion: {question}"})
+    return messages
+
+
+def run_agent(crew_id: str, question: str, conversation_id: str | None = None) -> tuple[str, list[AgentSource], str]:
     api_key = os.environ.get(ANTHROPIC_API_KEY_ENV_VAR)
     if not api_key:
         raise AgentError(
@@ -228,6 +255,21 @@ def run_agent(crew_id: str, question: str) -> tuple[str, list[AgentSource]]:
         )
 
     import anthropic  # local import: keeps the SDK optional for deployments not using the agent
+    import uuid as uuid_module
+
+    from app.core import db
+
+    if conversation_id:
+        if not db.conversation_belongs_to_crew(conversation_id, crew_id):
+            raise AgentConversationError(f"conversation '{conversation_id}' does not exist for crew '{crew_id}'")
+    else:
+        conversation_id = uuid_module.uuid4().hex
+        db.create_conversation(conversation_id, crew_id)
+
+    # Load prior turns BEFORE saving this question, so history reflects
+    # only what was actually discussed before now.
+    messages = _build_initial_messages(crew_id, question, conversation_id)
+    db.save_agent_message(conversation_id, "user", question)
 
     client = anthropic.Anthropic(api_key=api_key)
     fetched = _FetchedData()
@@ -235,15 +277,18 @@ def run_agent(crew_id: str, question: str) -> tuple[str, list[AgentSource]]:
     system_prompt = (
         "You are RofehAI's crew-health briefing assistant. You help a flight surgeon or crew "
         "medical officer understand a crew member's health trajectory across active domains. "
-        "Use the tools to gather real data (call get_risk for each active domain relevant to "
-        "the question -- check list_domains first if unsure which are active). When you have "
+        "Use the tools to gather real, CURRENT data (call get_risk for each active domain "
+        "relevant to the question -- check list_domains first if unsure which are active) even "
+        "if similar data was discussed earlier in this conversation -- always re-fetch rather "
+        "than relying on a remembered number, since risk can change between calls. You may "
+        "refer back to what was previously discussed or suggested for context. When you have "
         "enough information, call compose_answer to finalize -- you select which domains to "
         "include and an opening tone, but you never write the clinical wording yourself; the "
         "system assembles it from the real data you fetched. Never state or imply a diagnosis."
     )
 
-    messages = [{"role": "user", "content": f"Crew member: {crew_id}\nQuestion: {question}"}]
-
+    answer = None
+    sources: list[AgentSource] = []
     for _ in range(MAX_TOOL_TURNS):
         response = client.messages.create(
             model=AGENT_MODEL,
@@ -255,15 +300,15 @@ def run_agent(crew_id: str, question: str) -> tuple[str, list[AgentSource]]:
 
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         if not tool_uses:
-            # Model didn't call a tool at all -- treat as insufficient data rather
-            # than ever falling back to raw model text as the answer.
-            return _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched)
+            answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched)
+            break
 
         messages.append({"role": "assistant", "content": response.content})
 
         compose_call = next((t for t in tool_uses if t.name == "compose_answer"), None)
         if compose_call:
-            return _compose_final_answer(crew_id, compose_call.input, fetched)
+            answer, sources = _compose_final_answer(crew_id, compose_call.input, fetched)
+            break
 
         tool_results = []
         for t in tool_uses:
@@ -273,6 +318,9 @@ def run_agent(crew_id: str, question: str) -> tuple[str, list[AgentSource]]:
                 result = {"error": str(e)}
             tool_results.append({"type": "tool_result", "tool_use_id": t.id, "content": str(result)})
         messages.append({"role": "user", "content": tool_results})
+    else:
+        # Ran out of turns without the model finalizing -- fail safe, not open-ended.
+        answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched)
 
-    # Ran out of turns without the model finalizing -- fail safe, not open-ended.
-    return _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched)
+    db.save_agent_message(conversation_id, "assistant", answer)
+    return answer, sources, conversation_id

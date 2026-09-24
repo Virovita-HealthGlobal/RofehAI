@@ -124,3 +124,67 @@ def test_agent_ask_endpoint_rejects_unknown_crew():
     client = TestClient(app)
     r = client.post("/api/agent/ask", json={"crew_id": "not-a-crew-member", "question": "status?"})
     assert r.status_code == 404
+
+
+# --- Persistent memory tests (use case 2) --------------------------------
+
+def test_build_initial_messages_no_conversation_id_is_just_the_new_question():
+    messages = agent._build_initial_messages("crew-01", "how is this person doing?", conversation_id=None)
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    assert "how is this person doing?" in messages[0]["content"]
+
+
+def test_conversation_memory_persists_and_is_loaded_in_order():
+    """Real DB round-trip: create a conversation, save two turns, confirm
+    _build_initial_messages reconstructs them in the correct order for
+    the next call -- this is the actual mechanism that gives the agent
+    continuity across separate /api/agent/ask calls."""
+    from app.core import db
+    import uuid
+
+    conversation_id = uuid.uuid4().hex
+    db.create_conversation(conversation_id, "crew-03")
+    db.save_agent_message(conversation_id, "user", "how is crew-03 trending on SANS?")
+    db.save_agent_message(conversation_id, "assistant", "Risk is currently moderate and rising.")
+
+    messages = agent._build_initial_messages("crew-03", "did the countermeasure help?", conversation_id)
+
+    assert len(messages) == 3  # 2 prior turns + the new question
+    assert messages[0] == {"role": "user", "content": "how is crew-03 trending on SANS?"}
+    assert messages[1] == {"role": "assistant", "content": "Risk is currently moderate and rising."}
+    assert messages[2]["role"] == "user"
+    assert "did the countermeasure help?" in messages[2]["content"]
+
+
+def test_conversation_belongs_to_crew_rejects_cross_crew_access():
+    from app.core import db
+    import uuid
+
+    conversation_id = uuid.uuid4().hex
+    db.create_conversation(conversation_id, "crew-01")
+    assert db.conversation_belongs_to_crew(conversation_id, "crew-01") is True
+    assert db.conversation_belongs_to_crew(conversation_id, "crew-02") is False
+
+
+def test_agent_ask_endpoint_rejects_conversation_id_for_wrong_crew(monkeypatch):
+    """Even without a live API key, an invalid conversation_id must be
+    caught (404) before we'd ever attempt a model call."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.core import db
+    import uuid
+
+    conversation_id = uuid.uuid4().hex
+    db.create_conversation(conversation_id, "crew-01")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-dummy-not-real")
+    try:
+        client = TestClient(app)
+        r = client.post(
+            "/api/agent/ask",
+            json={"crew_id": "crew-02", "question": "x", "conversation_id": conversation_id},
+        )
+        assert r.status_code == 404
+    finally:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

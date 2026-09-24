@@ -4,6 +4,7 @@
   let chart = null;
   let activeDomains = [];      // [{id, display_name, status}] where status === "active"
   let placeholderDomains = []; // status === "architecture_ready"
+  const conversationIdByCrew = {}; // crew_id -> conversation_id, so each crew member's thread persists while browsing
 
   const rosterList = document.getElementById("roster-list");
   const detailPanel = document.getElementById("detail-panel");
@@ -153,6 +154,65 @@
     `;
   }
 
+  function chatPanel(crewName) {
+    return `
+      <div class="panel chat-panel" style="grid-column: 1 / -1;">
+        <div class="panel-title">Ask the briefing agent</div>
+        <div class="narrative" style="margin-top:0; padding-top:0; border-top:none;">
+          Reasons across this crew member's active health domains using real data — never fabricates clinical text; every sentence is sourced from an actual risk or countermeasure lookup.
+        </div>
+        <div id="chat-log" style="margin-top:12px; display:flex; flex-direction:column; gap:10px; max-height:340px; overflow-y:auto;"></div>
+        <form id="chat-form" style="display:flex; gap:8px; margin-top:12px;">
+          <input id="chat-input" type="text" placeholder="e.g. how is ${crewName} trending across their active domains?"
+            style="flex:1; background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text-1); padding:9px 12px; font-family:var(--font-body, inherit); font-size:13px;" />
+          <button class="btn is-primary" type="submit" id="chat-send">Ask</button>
+        </form>
+      </div>
+    `;
+  }
+
+  function appendChatMessage(role, text) {
+    const log = document.getElementById("chat-log");
+    if (!log) return;
+    const bubble = document.createElement("div");
+    bubble.style.cssText =
+      role === "user"
+        ? "align-self:flex-end; max-width:80%; background:var(--accent); color:#0A1020; padding:10px 12px; border-radius:10px 10px 2px 10px; font-size:13px; white-space:pre-wrap;"
+        : "align-self:flex-start; max-width:85%; background:var(--surface-2); border:1px solid var(--border); padding:10px 12px; border-radius:10px 10px 10px 2px; font-size:13px; white-space:pre-wrap; line-height:1.5;";
+    bubble.textContent = text;
+    log.appendChild(bubble);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function wireChatForm() {
+    const form = document.getElementById("chat-form");
+    if (!form) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("chat-input");
+      const sendBtn = document.getElementById("chat-send");
+      const question = input.value.trim();
+      if (!question) return;
+
+      appendChatMessage("user", question);
+      input.value = "";
+      sendBtn.disabled = true;
+      sendBtn.textContent = "Thinking…";
+
+      try {
+        const crewId = activeCrewId;
+        const res = await RofehAPI.askAgent(crewId, question, conversationIdByCrew[crewId]);
+        conversationIdByCrew[crewId] = res.conversation_id;
+        appendChatMessage("agent", res.answer);
+      } catch (err) {
+        appendChatMessage("agent", "Sorry — the agent isn't available right now. It may not be configured on this server yet.");
+      } finally {
+        sendBtn.disabled = false;
+        sendBtn.textContent = "Ask";
+      }
+    });
+  }
+
   function render(name, obs, risks, countermeasures) {
     const riskPanels = activeDomains
       .map((d, i) => riskPanel(`${d.display_name} risk trajectory`, risks[i]))
@@ -170,6 +230,7 @@
           <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
         </div>
         ${countermeasurePanel(countermeasures)}
+        ${chatPanel(name)}
         ${placeholderDomainsPanel()}
       </div>
     `;
@@ -186,6 +247,7 @@
       });
     });
 
+    wireChatForm();
     drawChart(obs);
   }
 

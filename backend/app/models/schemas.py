@@ -138,6 +138,9 @@ class DomainInfo(BaseModel):
 class AgentAskRequest(BaseModel):
     crew_id: str
     question: str = Field(..., min_length=1, max_length=1000)
+    conversation_id: Optional[str] = Field(
+        None, description="Continue an existing conversation thread. Omit to start a new one."
+    )
 
 
 class AgentSource(BaseModel):
@@ -154,3 +157,4 @@ class AgentAskResponse(BaseModel):
     question: str
     answer: str
     sources: list[AgentSource]
+    conversation_id: str = Field(..., description="Pass this back in the next ask() call to continue the thread.")

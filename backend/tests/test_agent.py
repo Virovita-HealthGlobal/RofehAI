@@ -1,0 +1,126 @@
+"""
+Tests for the agent orchestration layer, with particular focus on the
+safety property described in app.core.agent's module docstring: the
+model can never inject free text into the final answer -- every
+sentence must come from either the fixed OPENING_TONES constants or a
+real, already-fetched RiskOutput/CountermeasureRecommendation.
+
+These tests do NOT require a live ANTHROPIC_API_KEY -- they test
+_compose_final_answer and _execute_tool directly, which is exactly the
+deterministic, non-LLM part that has to be bulletproof regardless of
+which model (or prompt) sits in front of it.
+"""
+
+from app.core import agent
+from app.core.domains import DOMAIN_REGISTRY
+from app.core.seeding import ensure_seeded
+from app.core.digital_twin import registry
+from app.core.trajectory_model import score
+from app.data.synthetic import MISSION_LENGTH_DAYS
+
+
+def _real_fetched_data(crew_id: str, domain_id: str) -> agent._FetchedData:
+    """Build a _FetchedData the way run_agent would -- via a real get_risk
+    tool call against real (synthetic) data -- so these tests exercise the
+    actual data path, not a hand-crafted mock."""
+    fetched = agent._FetchedData()
+    result = agent._execute_tool("get_risk", {"crew_id": crew_id, "domain_id": domain_id}, crew_id, fetched)
+    assert "error" not in result
+    return fetched
+
+
+def test_compose_answer_only_includes_real_fetched_domains():
+    """The model claims it fetched 'sans', but never actually called
+    get_risk for it -- compose_answer must silently drop that section,
+    not fabricate content for it."""
+    fetched = agent._FetchedData()  # nothing fetched at all
+    tool_input = {"opening_tone": "all_nominal", "sections": [{"domain_id": "sans", "include_countermeasure": True}]}
+    answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched)
+    assert "sans" not in answer.lower() or "SANS" not in answer  # no fabricated SANS section
+    assert sources == []  # nothing to cite because nothing was actually fetched
+
+
+def test_compose_answer_uses_real_narrative_verbatim():
+    """The included text must be exactly the real RiskOutput.narrative,
+    not something the model composed."""
+    fetched = _real_fetched_data("crew-01", "sans")
+    real_narrative = fetched.risks["sans"].narrative
+    tool_input = {"opening_tone": "one_or_more_elevated", "sections": [{"domain_id": "sans"}]}
+    answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched)
+    assert real_narrative in answer
+    assert sources == [agent.AgentSource(domain_id="sans", kind="risk")]
+
+
+def test_compose_answer_rejects_invalid_opening_tone():
+    """If the model somehow passes a tone outside the fixed enum (e.g. by
+    a malformed tool call), fail safe to 'insufficient_data' rather than
+    error out or silently accept arbitrary text."""
+    fetched = agent._FetchedData()
+    tool_input = {"opening_tone": "<script>alert(1)</script>", "sections": []}
+    answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched)
+    assert answer.startswith(agent.OPENING_TONES["insufficient_data"])
+
+
+def test_compose_answer_cannot_include_countermeasure_not_fetched():
+    """Risk was fetched, but the countermeasure tool was never called --
+    compose_answer must not fabricate a countermeasure recommendation."""
+    fetched = _real_fetched_data("crew-01", "sans")
+    tool_input = {"opening_tone": "one_or_more_elevated", "sections": [{"domain_id": "sans", "include_countermeasure": True}]}
+    answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched)
+    assert not any(s.kind == "countermeasure" for s in sources)
+
+
+def test_compose_answer_always_includes_human_review_disclaimer():
+    fetched = agent._FetchedData()
+    tool_input = {"opening_tone": "insufficient_data", "sections": []}
+    answer, _ = agent._compose_final_answer("crew-01", tool_input, fetched)
+    assert "not a diagnosis" in answer.lower()
+    assert "human reviewer" in answer.lower()
+
+
+def test_execute_tool_get_risk_matches_direct_api_call():
+    """The tool dispatcher must return exactly what the REST API would --
+    same underlying score(), no divergent logic."""
+    fetched = agent._FetchedData()
+    tool_result = agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "sans"}, "crew-01", fetched)
+    ensure_seeded("crew-01", MISSION_LENGTH_DAYS)
+    twin = registry.get_or_create("crew-01")
+    direct_result = score(twin, "sans", MISSION_LENGTH_DAYS)
+    assert tool_result["current_risk"] == direct_result.current_risk
+    assert tool_result["narrative"] == direct_result.narrative
+
+
+def test_execute_tool_rejects_unknown_domain():
+    fetched = agent._FetchedData()
+    result = agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "not-a-domain"}, "crew-01", fetched)
+    assert "error" in result
+
+
+def test_execute_tool_unknown_tool_name_raises():
+    fetched = agent._FetchedData()
+    try:
+        agent._execute_tool("delete_everything", {}, "crew-01", fetched)
+        assert False, "expected AgentError"
+    except agent.AgentError:
+        pass
+
+
+def test_agent_ask_endpoint_returns_503_without_api_key(client_fixture=None):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    r = client.post("/api/agent/ask", json={"crew_id": "crew-01", "question": "how is crew-01 trending?"})
+    # No ANTHROPIC_API_KEY configured in this test environment -- must fail
+    # clearly (503), never silently return a fabricated answer.
+    assert r.status_code == 503
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+def test_agent_ask_endpoint_rejects_unknown_crew():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    r = client.post("/api/agent/ask", json={"crew_id": "not-a-crew-member", "question": "status?"})
+    assert r.status_code == 404

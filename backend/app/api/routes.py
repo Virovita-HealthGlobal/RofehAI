@@ -4,13 +4,17 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
+from app.core import agent as agent_core
 from app.core import countermeasures as cm
 from app.core import db
 from app.core.digital_twin import registry
 from app.core.domains import DOMAIN_REGISTRY, active_domains, all_domains
+from app.core.seeding import ensure_seeded as _ensure_seeded
 from app.core.trajectory_model import score
 from app.data.synthetic import CREW, MISSION_LENGTH_DAYS, generate_mission_history
 from app.models.schemas import (
+    AgentAskRequest,
+    AgentAskResponse,
     CountermeasureLogEntry,
     DomainInfo,
     Observation,
@@ -36,19 +40,6 @@ def gate_check(payload: dict):
     if submitted != configured:
         raise HTTPException(status_code=401, detail="Incorrect access code")
     return {"ok": True}
-
-
-def _ensure_seeded(crew_id: str, up_to_day: int) -> None:
-    """Lazily populate a crew member's digital twin with synthetic history
-    the first time they're requested, so the API is usable immediately
-    without a separate seeding step. Always seeds the FULL mission length
-    (not just up to the first-requested day) so that later queries for
-    later mission days aren't starved of data. Persists to the DB so this
-    only happens once per crew member, ever -- not once per process."""
-    if registry.has_persisted_history(crew_id):
-        return
-    for obs in generate_mission_history(crew_id, up_to_day=MISSION_LENGTH_DAYS):
-        registry.ingest(obs)
 
 
 def _require_domain(domain_id: str) -> None:
@@ -121,6 +112,17 @@ def get_countermeasure(crew_id: str, domain_id: str, mission_day: int = MISSION_
     risk = score(twin, domain_id, mission_day)
     rec = cm.recommend(risk)
     return rec.model_dump() if rec else None
+
+
+@router.post("/agent/ask", response_model=AgentAskResponse)
+def agent_ask(payload: AgentAskRequest):
+    if payload.crew_id not in _KNOWN_CREW_IDS:
+        raise HTTPException(status_code=404, detail=f"Unknown crew_id '{payload.crew_id}'")
+    try:
+        answer, sources = agent_core.run_agent(payload.crew_id, payload.question)
+    except agent_core.AgentError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return AgentAskResponse(crew_id=payload.crew_id, question=payload.question, answer=answer, sources=sources)
 
 
 @router.post("/countermeasures/log")

@@ -3,6 +3,11 @@ services:
     build: ./backend
     ports:
       - "8900:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ROFEHAI_GATE_CODE=${ROFEHAI_GATE_CODE:-}
+      - ROFEHAI_API_KEY=${ROFEHAI_API_KEY:-}
+      - ROFEHAI_DATABASE_URL=${ROFEHAI_DATABASE_URL:-}
 
   frontend:
     build: ./frontend

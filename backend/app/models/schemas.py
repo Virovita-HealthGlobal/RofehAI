@@ -133,3 +133,24 @@ class DomainInfo(BaseModel):
     id: str
     display_name: str
     status: str
+
+
+class AgentAskRequest(BaseModel):
+    crew_id: str
+    question: str = Field(..., min_length=1, max_length=1000)
+
+
+class AgentSource(BaseModel):
+    """One piece of real, fetched data the agent's answer draws from --
+    included so the answer is auditable back to an actual RiskOutput or
+    countermeasure, not just trusted at face value."""
+
+    domain_id: str
+    kind: str  # "risk" | "countermeasure"
+
+
+class AgentAskResponse(BaseModel):
+    crew_id: str
+    question: str
+    answer: str
+    sources: list[AgentSource]

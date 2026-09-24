@@ -436,3 +436,80 @@ def test_agent_ask_endpoint_accepts_fleet_wide_request_without_crew_id(monkeypat
     finally:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv(agent.DAILY_CALL_LIMIT_ENV_VAR, raising=False)
+
+
+def test_fleet_compose_answer_backstops_unreported_fetched_pairs():
+    """Regression test for a real live bug: the model fetched all 4 crew
+    members x 2 domains, but only included 3 of 8 pairs in its
+    compose_answer sections. The backstop must append every fetched pair
+    the model's sections did NOT cover -- completeness enforced in code,
+    not just requested in the prompt."""
+    fetched = agent._FetchedData()
+    # Fetch data for two crew members across two domains -- 4 pairs total.
+    agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "sans"}, None, fetched)
+    agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "immune_dysregulation"}, None, fetched)
+    agent._execute_tool("get_risk", {"crew_id": "crew-02", "domain_id": "sans"}, None, fetched)
+    agent._execute_tool("get_risk", {"crew_id": "crew-02", "domain_id": "immune_dysregulation"}, None, fetched)
+
+    # Model's sections only report ONE of the four fetched pairs.
+    tool_input = {
+        "opening_tone": "one_or_more_elevated",
+        "sections": [{"crew_id": "crew-01", "domain_id": "sans"}],
+    }
+    answer, sources = agent._compose_final_answer(None, tool_input, fetched)
+
+    reported_pairs = {(s.crew_id, s.domain_id) for s in sources}
+    assert reported_pairs == {
+        ("crew-01", "sans"),
+        ("crew-01", "immune_dysregulation"),
+        ("crew-02", "sans"),
+        ("crew-02", "immune_dysregulation"),
+    }
+    # Backstop entries are grouped seamlessly under the right crew member's
+    # heading (not called out as a separate "also checked" appendix) --
+    # each person appears exactly once with all their real data together.
+    assert answer.count("### A. Mendez") == 1
+    assert answer.count("### J. Okafor") == 1
+    assert "J. Okafor" in answer  # crew-02's real name appears even though the model didn't mention them
+
+
+def test_single_crew_compose_answer_has_no_backstop_section():
+    """The completeness backstop is fleet-mode only -- a single-crew-member
+    answer that only mentions one domain (e.g. the user only asked about
+    SANS) should NOT get an unsolicited 'also checked' appendix."""
+    fetched = agent._FetchedData()
+    agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "sans"}, "crew-01", fetched)
+    tool_input = {"opening_tone": "one_or_more_elevated", "sections": [{"domain_id": "sans"}]}
+    answer, sources = agent._compose_final_answer("crew-01", tool_input, fetched)
+    assert "Also checked" not in answer
+
+
+def test_fleet_compose_answer_groups_correctly_even_when_sections_interleaved():
+    """Regression test for a real live bug: the model submitted sections in
+    INTERLEAVED order (crew-A/domain-1, crew-B/domain-1, crew-A/domain-2,
+    crew-B/domain-2) rather than grouped by crew member. The old
+    'print a header when the crew changes from the previous line' logic
+    produced a duplicate header for crew-A. Grouping must be fully
+    order-independent -- each crew member gets exactly one heading no
+    matter how the model orders its sections."""
+    fetched = agent._FetchedData()
+    agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "sans"}, None, fetched)
+    agent._execute_tool("get_risk", {"crew_id": "crew-02", "domain_id": "sans"}, None, fetched)
+    agent._execute_tool("get_risk", {"crew_id": "crew-01", "domain_id": "immune_dysregulation"}, None, fetched)
+    agent._execute_tool("get_risk", {"crew_id": "crew-02", "domain_id": "immune_dysregulation"}, None, fetched)
+
+    # Deliberately interleaved: crew-01, crew-02, crew-01, crew-02 -- not grouped.
+    tool_input = {
+        "opening_tone": "one_or_more_elevated",
+        "sections": [
+            {"crew_id": "crew-01", "domain_id": "sans"},
+            {"crew_id": "crew-02", "domain_id": "sans"},
+            {"crew_id": "crew-01", "domain_id": "immune_dysregulation"},
+            {"crew_id": "crew-02", "domain_id": "immune_dysregulation"},
+        ],
+    }
+    answer, sources = agent._compose_final_answer(None, tool_input, fetched)
+
+    assert answer.count("### A. Mendez") == 1  # exactly one heading despite interleaved input
+    assert answer.count("### J. Okafor") == 1
+    assert len(sources) == 4

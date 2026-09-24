@@ -51,7 +51,7 @@ from app.models.schemas import AgentSource, CountermeasureRecommendation, RiskOu
 
 ANTHROPIC_API_KEY_ENV_VAR = "ANTHROPIC_API_KEY"
 AGENT_MODEL = "claude-sonnet-4-6"
-MAX_TOOL_TURNS = 6
+MAX_TOOL_TURNS = 12  # generous enough for an exhaustive fleet-wide sweep (crew x active domains)
 MAX_HISTORY_MESSAGES = 20  # caps unbounded conversation growth -- see AgentRateLimitError below
 DAILY_CALL_LIMIT_ENV_VAR = "ROFEHAI_AGENT_DAILY_LIMIT"
 DEFAULT_DAILY_CALL_LIMIT = 100  # global cap across all crew members -- real $ per call
@@ -263,43 +263,84 @@ def _compose_final_answer(
         tone = "insufficient_data"
     lines = [OPENING_TONES[tone]]
     sources: list[AgentSource] = []
-
     crew_name_by_id = {c.id: c.name for c in CREW}
-    last_crew_id_shown = None
 
-    for section in tool_input.get("sections", []):
-        domain_id = section.get("domain_id")
-        section_crew_id = section.get("crew_id") or crew_id
-        if not domain_id or not section_crew_id:
-            continue  # can't resolve which crew member/domain this refers to -- skip rather than guess
-        risk = fetched.risks.get((section_crew_id, domain_id))
-        if risk is None:
-            continue  # ignore any (crew, domain) the model didn't actually fetch -- can't be included
-
-        # In fleet mode (crew_id is None), group consecutive sections under a crew-member heading.
-        if crew_id is None and section_crew_id != last_crew_id_shown:
-            crew_display = crew_name_by_id.get(section_crew_id, section_crew_id)
-            lines.append(f"\n### {crew_display} ({section_crew_id})")
-            last_crew_id_shown = section_crew_id
-
+    def render_entry(lines_out: list[str], sources_out: list[AgentSource], section_crew_id: str, domain_id: str, risk, include_cm: bool) -> None:
         domain = DOMAIN_REGISTRY.get(domain_id)
         display_name = domain.display_name if domain else domain_id
-
         if risk.is_fallback:
-            lines.append(f"\n**{display_name}:** {risk.narrative}")
+            lines_out.append(f"\n**{display_name}:** {risk.narrative}")
         else:
-            lines.append(
+            lines_out.append(
                 f"\n**{display_name}:** {round(risk.current_risk * 100)}% current risk "
                 f"({'+' if risk.risk_delta_30d >= 0 else ''}{round(risk.risk_delta_30d * 100)}% / 30d), "
                 f"confidence {risk.confidence:.2f}. {risk.narrative}"
             )
-        sources.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="risk"))
-
-        if section.get("include_countermeasure"):
+        sources_out.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="risk"))
+        if include_cm:
             rec = fetched.countermeasures.get((section_crew_id, domain_id))
             if rec:
-                lines.append(f"  Suggested: {rec.countermeasure.name} -- {rec.rationale}")
-                sources.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="countermeasure"))
+                lines_out.append(f"  Suggested: {rec.countermeasure.name} -- {rec.rationale}")
+                sources_out.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="countermeasure"))
+
+    if crew_id is not None:
+        # Single-crew-member mode: no grouping needed, render sections as given.
+        for section in tool_input.get("sections", []):
+            domain_id = section.get("domain_id")
+            if not domain_id:
+                continue
+            risk = fetched.risks.get((crew_id, domain_id))
+            if risk is None:
+                continue
+            render_entry(lines, sources, crew_id, domain_id, risk, bool(section.get("include_countermeasure")))
+    else:
+        # Fleet mode: GROUP BY CREW MEMBER FIRST, then render -- this must be
+        # order-independent of how the model submitted sections (a live bug
+        # showed the model interleaving crew/domain order, which fragmented
+        # a naive "print header when crew changes" approach into duplicate
+        # headers for the same person). Priority order across crew members
+        # is preserved via first-appearance order in the model's own
+        # sections; any crew member the model never mentioned (caught by
+        # the completeness backstop below) is appended after, in a stable
+        # sorted order.
+        crew_order: list[str] = []
+        entries_by_crew: dict[str, list[tuple[str, bool]]] = {}
+
+        for section in tool_input.get("sections", []):
+            domain_id = section.get("domain_id")
+            section_crew_id = section.get("crew_id")
+            if not domain_id or not section_crew_id:
+                continue
+            if (section_crew_id, domain_id) not in fetched.risks:
+                continue  # can't include a pair that was never actually fetched
+            if section_crew_id not in entries_by_crew:
+                entries_by_crew[section_crew_id] = []
+                crew_order.append(section_crew_id)
+            entries_by_crew[section_crew_id].append((domain_id, bool(section.get("include_countermeasure"))))
+
+        # CODE-LEVEL COMPLETENESS BACKSTOP: the system prompt asks the model
+        # to report every pair it fetched, but a prompt is a request, not a
+        # guarantee -- a live test showed the model fetching all 4 crew x 2
+        # domains but reporting only a subset. Anything fetched that the
+        # model's own sections didn't cover is appended here, grouped under
+        # the same crew-member headings, so a triage answer can never
+        # silently under-report what was actually checked.
+        reported_pairs = {
+            (c, d) for c, entries in entries_by_crew.items() for d, _ in entries
+        }
+        missing_pairs = sorted(k for k in fetched.risks.keys() if k not in reported_pairs)
+        for section_crew_id, domain_id in missing_pairs:
+            if section_crew_id not in entries_by_crew:
+                entries_by_crew[section_crew_id] = []
+                crew_order.append(section_crew_id)
+            entries_by_crew[section_crew_id].append((domain_id, False))
+
+        for section_crew_id in crew_order:
+            crew_display = crew_name_by_id.get(section_crew_id, section_crew_id)
+            lines.append(f"\n### {crew_display} ({section_crew_id})")
+            for domain_id, include_cm in entries_by_crew[section_crew_id]:
+                risk = fetched.risks[(section_crew_id, domain_id)]
+                render_entry(lines, sources, section_crew_id, domain_id, risk, include_cm)
 
     lines.append(
         "\n\n_This is decision support, not a diagnosis. A human reviewer must confirm any action._"
@@ -404,13 +445,18 @@ def run_agent(crew_id: str | None, question: str, conversation_id: str | None = 
         system_prompt = (
             "You are RofehAI's crew-health briefing assistant, answering a FLEET-WIDE question "
             "across the entire crew roster (e.g. 'who needs review today?'). Call list_crew first "
-            "to get the real roster, then call get_risk (passing the specific crew_id each time) "
-            "for each crew member across the active domains relevant to the question -- check "
-            "list_domains if unsure which are active. Prioritize crew members with the highest or "
-            "fastest-rising risk first. When you have enough information, call compose_answer with "
-            "one section per (crew_id, domain_id) you actually checked, in priority order -- you "
-            "never write the clinical wording yourself; the system assembles it from the real data "
-            "you fetched. Never state or imply a diagnosis."
+            "to get the real roster, then call list_domains to see the active domains. You MUST "
+            "call get_risk for EVERY crew member returned by list_crew, across EVERY active "
+            "domain, before calling compose_answer -- do not stop early or sample a subset. "
+            "Then, when you call compose_answer, you MUST include one section for EVERY single "
+            "(crew_id, domain_id) pair you called get_risk on -- not just the ones with elevated "
+            "risk. A human reviewer needs to see the full sweep to trust that nothing was silently "
+            "dropped; a nominal or insufficient-data result is still real information and must be "
+            "reported, not omitted because it seemed unremarkable. Order sections with the "
+            "highest or fastest-rising risk first, but ordering is the only place you selectively "
+            "prioritize -- inclusion is not optional. You never write the clinical wording "
+            "yourself; the system assembles it from the real data you fetched. Never state or "
+            "imply a diagnosis."
         )
 
     answer = None

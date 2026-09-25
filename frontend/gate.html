@@ -113,8 +113,8 @@
       <form class="gate-form" id="forgot-form" style="display:none;">
         <input class="gate-input" id="forgot-email" type="text" placeholder="Email" autocomplete="username" required />
         <div class="gate-error" id="forgot-error"></div>
-        <div id="forgot-success" style="color:var(--status-nominal); font-size:13px; margin-bottom:12px; display:none;">If that email has an account, a reset link has been sent.</div>
-        <button class="gate-btn" type="submit" id="forgot-submit">Send reset link</button>
+        <div id="forgot-success" style="color:var(--status-nominal); font-size:13px; margin-bottom:12px; display:none;">If that email has an account, a reset code has been sent.</div>
+        <button class="gate-btn" type="submit" id="forgot-submit">Send reset code</button>
       </form>
 
       <div style="text-align:center; margin-top:14px;">
@@ -302,7 +302,7 @@
         forgotError.style.display = "block";
       } finally {
         forgotSubmitBtn.disabled = false;
-        forgotSubmitBtn.textContent = "Send reset link";
+        forgotSubmitBtn.textContent = "Send reset code";
       }
     });
   </script>

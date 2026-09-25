@@ -40,7 +40,7 @@ def _signup(email="pending_user@example.com", display_name="Pending User", nda=T
 
 
 def _signup_and_approve(email="approve_user@example.com", display_name="Approve User"):
-    """Helper: signs up and approves, returning the set-password token."""
+    """Helper: signs up and approves, returning the 6-digit code."""
     _signup(email=email, display_name=display_name)
     user = db.get_user_by_username(email)
     approval_token = user.approval_token
@@ -145,10 +145,11 @@ def test_unknown_approval_token_returns_404():
 
 
 def test_set_password_activates_the_account_and_allows_login():
-    set_token = _signup_and_approve(email="full_flow@example.com")
-    assert set_token is not None
+    code = _signup_and_approve(email="full_flow@example.com")
+    assert code is not None
+    assert len(code) == 6 and code.isdigit()
 
-    r = client.post("/api/auth/set-password", json={"token": set_token, "new_password": "my-real-password-123"})
+    r = client.post("/api/auth/set-password", json={"email": "full_flow@example.com", "code": code, "new_password": "my-real-password-123"})
     assert r.status_code == 200
 
     updated = db.get_user_by_username("full_flow@example.com")
@@ -161,27 +162,36 @@ def test_set_password_activates_the_account_and_allows_login():
 
 
 def test_set_password_rejects_short_password():
-    set_token = _signup_and_approve(email="short_pw_setup@example.com")
-    r = client.post("/api/auth/set-password", json={"token": set_token, "new_password": "short"})
+    code = _signup_and_approve(email="short_pw_setup@example.com")
+    r = client.post("/api/auth/set-password", json={"email": "short_pw_setup@example.com", "code": code, "new_password": "short"})
     assert r.status_code == 400
 
 
-def test_set_password_token_is_single_use():
-    set_token = _signup_and_approve(email="single_use_setpw@example.com")
-    first = client.post("/api/auth/set-password", json={"token": set_token, "new_password": "first-password-123"})
+def test_set_password_code_is_single_use():
+    code = _signup_and_approve(email="single_use_setpw@example.com")
+    first = client.post("/api/auth/set-password", json={"email": "single_use_setpw@example.com", "code": code, "new_password": "first-password-123"})
     assert first.status_code == 200
-    second = client.post("/api/auth/set-password", json={"token": set_token, "new_password": "second-password-456"})
+    second = client.post("/api/auth/set-password", json={"email": "single_use_setpw@example.com", "code": code, "new_password": "second-password-456"})
     assert second.status_code == 404
 
 
-def test_set_password_rejects_unknown_token():
-    r = client.post("/api/auth/set-password", json={"token": "not-a-real-token", "new_password": "whatever-12345"})
+def test_set_password_rejects_unknown_code():
+    r = client.post("/api/auth/set-password", json={"email": "nobody@example.com", "code": "000000", "new_password": "whatever-12345"})
+    assert r.status_code == 404
+
+
+def test_set_password_rejects_correct_code_with_wrong_email():
+    """The real security property of requiring both together: knowing
+    someone else's code doesn't help if you don't also know which email
+    it belongs to."""
+    code = _signup_and_approve(email="right_email_wrong_check@example.com")
+    r = client.post("/api/auth/set-password", json={"email": "wrong-email@example.com", "code": code, "new_password": "whatever-12345"})
     assert r.status_code == 404
 
 
 def test_forgot_password_gives_identical_response_regardless_of_whether_email_exists():
-    set_token = _signup_and_approve(email="forgot_pw_real@example.com")
-    client.post("/api/auth/set-password", json={"token": set_token, "new_password": "original-password-123"})
+    code = _signup_and_approve(email="forgot_pw_real@example.com")
+    client.post("/api/auth/set-password", json={"email": "forgot_pw_real@example.com", "code": code, "new_password": "original-password-123"})
 
     with patch("app.core.notify.send_password_setup_email"):
         real_r = client.post("/api/auth/forgot-password", json={"email": "forgot_pw_real@example.com"})
@@ -191,19 +201,20 @@ def test_forgot_password_gives_identical_response_regardless_of_whether_email_ex
     assert real_r.json() == fake_r.json()
 
 
-def test_forgot_password_issues_a_working_reset_link_for_a_real_account():
-    set_token = _signup_and_approve(email="forgot_pw_flow@example.com")
-    client.post("/api/auth/set-password", json={"token": set_token, "new_password": "original-password-456"})
+def test_forgot_password_issues_a_working_reset_code_for_a_real_account():
+    code = _signup_and_approve(email="forgot_pw_flow@example.com")
+    client.post("/api/auth/set-password", json={"email": "forgot_pw_flow@example.com", "code": code, "new_password": "original-password-456"})
 
     with patch("app.core.notify.send_password_setup_email") as mock_send:
         client.post("/api/auth/forgot-password", json={"email": "forgot_pw_flow@example.com"})
         mock_send.assert_called_once()
 
     updated = db.get_user_by_username("forgot_pw_flow@example.com")
-    new_token = updated.password_set_token
-    assert new_token is not None
+    new_code = updated.password_set_token
+    assert new_code is not None
+    assert new_code != code  # a genuinely new code, not the old one reused
 
-    reset_r = client.post("/api/auth/set-password", json={"token": new_token, "new_password": "brand-new-password-789"})
+    reset_r = client.post("/api/auth/set-password", json={"email": "forgot_pw_flow@example.com", "code": new_code, "new_password": "brand-new-password-789"})
     assert reset_r.status_code == 200
 
     old_login = client.post("/api/auth/login", json={"username": "forgot_pw_flow@example.com", "password": "original-password-456"})

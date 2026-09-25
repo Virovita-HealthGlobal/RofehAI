@@ -382,33 +382,57 @@ Added on top of the initial reference implementation, still well short of
   acknowledgment — **no password at signup time**. The account is
   created immediately but starts **inactive with no password hash at
   all**, and genuinely cannot log in under any password until two
-  separate things happen: an admin approves, AND the requester sets
-  their own password via a link sent only to them.
+  separate things happen: an admin approves, AND the requester enters a
+  6-digit code (emailed to them) alongside their email to set their own
+  password.
 
-  The admin is notified by email (via Resend) containing the
+  The admin is notified by email (via SMTP through your existing
+  mailbox) containing the
   requester's email, display name, and NDA-acknowledgment timestamp —
   never a password, since none exists yet. Approve/Reject are one-click
   links straight from that email (each a single-use token — clicking
   Approve twice does nothing the second time, confirmed by a test).
   **Approving does not activate the account directly** — it issues a
-  second, separate single-use token and emails a "create your password"
-  link to the *requester's own inbox*, never shown to or handled by the
-  admin. The account only becomes active once the requester actually
-  submits a password through that link (`set-password.html`), confirmed
-  end-to-end by a live test: real signup form → real approve call →
-  real password-setup link → real set-password page → real login, all
-  through the actual browser forms, not just backend unit tests.
+  single-use, expiring 6-digit code and emails it to the *requester's
+  own inbox*, never shown to or handled by the admin. Because a 6-digit
+  code has far less entropy than a long random token (1 million
+  possibilities, not astronomically more), `set-password` requires the
+  matching **email together with** the code — confirmed by a test that
+  the right code with the wrong email is rejected, so knowing someone
+  else's code alone isn't enough. The account only becomes active once
+  the requester actually submits the correct email+code pair through
+  `set-password.html`, confirmed end-to-end by a live test: real signup
+  form → real approve call → real 6-digit code → real set-password page
+  (including the digit-only input sanitization actually stripping junk
+  characters as typed) → real login, all through the actual browser
+  forms, not just backend unit tests.
 
-  **Forgot password reuses the exact same mechanism** — same token
-  type, same `set-password.html` page, same 48-hour single-use
-  guarantee — rather than a separate system. `POST /api/auth/forgot-
-  password` always returns an identical response whether or not the
-  email has an account, confirmed by a test, so it can't be used to
-  enumerate real accounts.
+  **Forgot password reuses the exact same mechanism** — same code type,
+  same `set-password.html` page, same 48-hour single-use guarantee —
+  rather than a separate system. `POST /api/auth/forgot-password`
+  always returns an identical response whether or not the email has an
+  account, confirmed by a test, so it can't be used to enumerate real
+  accounts. **Honest, unresolved gap**: there is no rate limiting on
+  `set-password` attempts specifically, so a determined attacker who
+  already knows a pending requester's email could attempt to brute-force
+  the 6-digit code within its 48-hour window — a real tradeoff of
+  choosing a short code over a long token, accepted here for the
+  simpler, more mobile-friendly experience, not something to treat as
+  fully closed.
 
-  If Resend isn't configured or a send fails, the pending account still
+  If SMTP isn't configured or a send fails, the pending account still
   exists (nothing is silently lost) and the requester/admin sees a
-  clear error rather than a false "success."
+  clear error rather than a false "success." **Switched from Resend to
+  plain SMTP** after Resend's account-side permissions rejected every
+  send attempt, confirmed via a raw API call that bypassed all of this
+  app's own code entirely (genuinely their side, not a config mistake
+  here) — with real time pressure, SMTP through an already-working
+  mailbox was the faster path. Every public function in `notify.py`
+  kept its exact name and signature through the swap, confirmed by the
+  full existing test suite passing unchanged against the
+  new implementation, plus 7 new tests for the SMTP transport itself
+  (correct SSL-vs-STARTTLS port handling, clear errors on missing
+  config or a failed send).
 
   **Real attribution, not spoofable**: countermeasure logs and alert
   acknowledgments use the authenticated user's identity automatically

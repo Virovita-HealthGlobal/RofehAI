@@ -227,22 +227,23 @@ def signup(payload: dict):
 @router.get("/auth/approve/{token}", response_class=HTMLResponse)
 def approve_signup(token: str):
     """Approving does NOT activate the account -- it issues a single-use
-    link and emails it to the REQUESTER, who sets their own password.
-    The admin never sees or sets a password for anyone."""
+    6-digit code and emails it to the REQUESTER, who enters it alongside
+    their email to set their own password. The admin never sees or sets
+    a password for anyone."""
     user = db.get_user_by_approval_token(token)
     if user is None:
         return HTMLResponse("<h2>This approval link is invalid or has already been used.</h2>", status_code=404)
 
-    set_token = secrets.token_urlsafe(32)
+    code = f"{secrets.randbelow(1_000_000):06d}"
     expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=PASSWORD_SET_TOKEN_LIFETIME_HOURS)
-    db.approve_pending_user(user.id, set_token, expires_at)
+    db.approve_pending_user(user.id, code, expires_at)
 
     frontend_base = os.environ.get("ROFEHAI_PUBLIC_APP_BASE", "").rstrip("/")
-    set_password_url = f"{frontend_base}/set-password.html?token={set_token}"
+    set_password_url = f"{frontend_base}/set-password.html"
 
     try:
-        notify.send_password_setup_email(user.username, user.display_name, set_password_url, is_reset=False)
-        return HTMLResponse(f"<h2>Approved. A password-setup link has been emailed to {user.username}.</h2>")
+        notify.send_password_setup_email(user.username, user.display_name, set_password_url, code, is_reset=False)
+        return HTMLResponse(f"<h2>Approved. A password-setup code has been emailed to {user.username}.</h2>")
     except notify.EmailError as e:
         return HTMLResponse(
             f"<h2>Approved, but the email to {user.username} failed to send: {e}</h2>"
@@ -264,15 +265,19 @@ def reject_signup(token: str):
 def set_password(payload: dict):
     """Used both right after approval (first password ever) and for a
     later 'forgot password' reset -- identical mechanism, identical
-    guarantees: single-use, expiring, requester-only."""
-    token = (payload or {}).get("token", "")
+    guarantees: single-use, expiring 6-digit code, requires the matching
+    email too (a code alone has far less entropy than the old 32-byte
+    URL token, so pairing it with a known email narrows what an
+    attacker would need to guess correctly)."""
+    email = (payload or {}).get("email", "").strip().lower()
+    code = (payload or {}).get("code", "").strip()
     new_password = (payload or {}).get("new_password", "")
 
-    user = db.get_user_by_password_set_token(token)
+    user = db.get_user_by_username_and_password_set_code(email, code)
     if user is None:
-        raise HTTPException(status_code=404, detail="This link is invalid or has already been used")
+        raise HTTPException(status_code=404, detail="That code doesn't match, or has already been used")
     if user.password_set_token_expires_at and user.password_set_token_expires_at < datetime.now(UTC).replace(tzinfo=None):
-        raise HTTPException(status_code=410, detail="This link has expired. Request a new one.")
+        raise HTTPException(status_code=410, detail="This code has expired. Request a new one.")
     if len(new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
@@ -286,20 +291,20 @@ def forgot_password(payload: dict):
     the email matched a real account -- so this endpoint can't be used
     to enumerate which emails have accounts."""
     email = (payload or {}).get("email", "").strip().lower()
-    generic_response = {"ok": True, "message": "If that email has an account, a reset link has been sent."}
+    generic_response = {"ok": True, "message": "If that email has an account, a reset code has been sent."}
 
     user = db.get_user_by_username(email)
     if not user or not user.is_active:
         return generic_response  # deliberately identical to the success path -- no enumeration signal
 
-    set_token = secrets.token_urlsafe(32)
+    code = f"{secrets.randbelow(1_000_000):06d}"
     expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=PASSWORD_SET_TOKEN_LIFETIME_HOURS)
-    db.issue_password_set_token(user.id, set_token, expires_at)
+    db.issue_password_set_token(user.id, code, expires_at)
 
     frontend_base = os.environ.get("ROFEHAI_PUBLIC_APP_BASE", "").rstrip("/")
-    set_password_url = f"{frontend_base}/set-password.html?token={set_token}"
+    set_password_url = f"{frontend_base}/set-password.html"
     try:
-        notify.send_password_setup_email(user.username, user.display_name, set_password_url, is_reset=True)
+        notify.send_password_setup_email(user.username, user.display_name, set_password_url, code, is_reset=True)
     except notify.EmailError:
         pass  # still return the generic response -- don't leak email-send failures to the caller either
 

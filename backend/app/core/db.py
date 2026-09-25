@@ -468,6 +468,19 @@ def approve_pending_user(user_id: int, password_set_token: str, expires_at: date
         return user
 
 
+def get_user_by_username_and_password_set_code(username: str, code: str) -> User | None:
+    """Requires BOTH the email and the 6-digit code to match -- a code
+    alone has far less entropy than the old 32-byte URL token (1 million
+    possibilities vs. astronomically more), so pairing it with a known
+    email significantly narrows what an attacker would need to guess
+    correctly. There is still no rate limiting on this endpoint -- a
+    real, documented gap, same as login attempts elsewhere in this
+    project."""
+    with Session(engine) as session:
+        stmt = select(User).where(User.username == username, User.password_set_token == code)
+        return session.exec(stmt).first()
+
+
 def get_user_by_password_set_token(token: str) -> User | None:
     with Session(engine) as session:
         stmt = select(User).where(User.password_set_token == token)

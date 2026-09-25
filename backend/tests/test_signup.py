@@ -225,12 +225,40 @@ def test_forgot_password_issues_a_working_reset_code_for_a_real_account():
 
 
 def test_forgot_password_does_nothing_for_a_still_pending_account():
+    """Blocks the real security hole: without this, anyone could sign
+    up and immediately click 'forgot password' to skip admin review
+    entirely."""
     _signup(email="still_pending@example.com")
     with patch("app.core.notify.send_password_setup_email") as mock_send:
         client.post("/api/auth/forgot-password", json={"email": "still_pending@example.com"})
         mock_send.assert_not_called()
     user = db.get_user_by_username("still_pending@example.com")
     assert user.password_set_token is None
+
+
+def test_forgot_password_works_for_an_approved_but_not_yet_activated_account():
+    """The actual intended fix: someone who was approved by an admin but
+    never finished setting their first password (their original code
+    expired, or the email never arrived) can use the SAME 'forgot
+    password' button to get a fresh one -- one mechanism, not two
+    separate code-issuing paths for what's really the same situation."""
+    _signup(email="approved_not_activated@example.com")
+    user = db.get_user_by_username("approved_not_activated@example.com")
+    with patch("app.core.notify.send_password_setup_email"):
+        client.get(f"/api/auth/approve/{user.approval_token}")
+    # At this point: approved (approval_token cleared), but no password
+    # was ever set -- exactly the stuck state this fix addresses.
+    approved_user = db.get_user_by_username("approved_not_activated@example.com")
+    assert approved_user.approval_token is None
+    assert approved_user.is_active is False
+
+    with patch("app.core.notify.send_password_setup_email") as mock_send:
+        r = client.post("/api/auth/forgot-password", json={"email": "approved_not_activated@example.com"})
+        assert r.status_code == 200
+        mock_send.assert_called_once()
+
+    refreshed = db.get_user_by_username("approved_not_activated@example.com")
+    assert refreshed.password_set_token is not None
 
 
 def test_signup_email_failure_returns_502_but_account_still_exists():

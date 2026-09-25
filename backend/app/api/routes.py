@@ -289,12 +289,19 @@ def set_password(payload: dict):
 def forgot_password(payload: dict):
     """Always returns the same generic response regardless of whether
     the email matched a real account -- so this endpoint can't be used
-    to enumerate which emails have accounts."""
+    to enumerate which emails have accounts. Deliberately works for
+    BOTH an already-active account (a real password reset) and a
+    pending-but-admin-approved one (their first code, if the original
+    approval email never arrived or expired) -- one simple mechanism
+    instead of two different code-issuing paths. Does NOT work for an
+    account still awaiting its FIRST admin review (approval_token still
+    set) -- that would let anyone skip admin approval entirely just by
+    signing up and immediately clicking "forgot password"."""
     email = (payload or {}).get("email", "").strip().lower()
     generic_response = {"ok": True, "message": "If that email has an account, a reset code has been sent."}
 
     user = db.get_user_by_username(email)
-    if not user or not user.is_active:
+    if not user or user.approval_token is not None:
         return generic_response  # deliberately identical to the success path -- no enumeration signal
 
     code = f"{secrets.randbelow(1_000_000):06d}"

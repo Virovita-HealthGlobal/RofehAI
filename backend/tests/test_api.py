@@ -74,6 +74,33 @@ def test_gate_check_wrong_code():
     assert r.status_code == 401
 
 
+def test_gate_check_logs_both_success_and_failure_attempts():
+    """Regression coverage for a real gap: the NDA checkbox used to be
+    purely client-side with no server-side record at all. Every attempt,
+    success or failure, must now be logged with the NDA flag and outcome
+    -- and the actual passcode must never appear in the log."""
+    client.post("/api/gate/check", json={"code": "rofehai-preview-2026", "nda_acknowledged": True})
+    client.post("/api/gate/check", json={"code": "definitely-wrong", "nda_acknowledged": True})
+
+    r = client.get("/api/gate/audit-log", params={"limit": 5})
+    assert r.status_code == 200
+    entries = r.json()
+    assert len(entries) >= 2
+    assert any(e["success"] is True and e["nda_acknowledged"] is True for e in entries)
+    assert any(e["success"] is False for e in entries)
+    # The submitted code itself must never be present in any log entry.
+    for e in entries:
+        assert "code" not in e
+        assert "rofehai-preview-2026" not in str(e)
+        assert "definitely-wrong" not in str(e)
+
+
+def test_gate_check_records_nda_not_acknowledged():
+    client.post("/api/gate/check", json={"code": "rofehai-preview-2026", "nda_acknowledged": False})
+    r = client.get("/api/gate/audit-log", params={"limit": 1})
+    assert r.json()[0]["nda_acknowledged"] is False
+
+
 def test_gate_check_custom_code(monkeypatch):
     monkeypatch.setenv("ROFEHAI_GATE_CODE", "custom-secret")
     try:

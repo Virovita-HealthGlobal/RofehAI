@@ -123,6 +123,9 @@ class CountermeasureLogEntry(BaseModel):
     countermeasure_id: str
     mission_day: int
     notes: Optional[str] = None
+    actor_name: Optional[str] = Field(
+        None, description="Who logged this action -- lightweight attribution, not a real account system. See README."
+    )
 
 
 class DomainInfo(BaseModel):

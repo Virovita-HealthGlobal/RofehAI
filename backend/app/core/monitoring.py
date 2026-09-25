@@ -145,6 +145,7 @@ def _alert_to_dict(alert) -> dict:
         "queued_at": alert.queued_at.isoformat() if alert.queued_at else None,
         "transmitted_at": alert.transmitted_at.isoformat() if alert.transmitted_at else None,
         "acknowledged_at": alert.acknowledged_at.isoformat() if alert.acknowledged_at else None,
+        "acknowledged_by": alert.acknowledged_by,
         "status": (
             "acknowledged" if alert.acknowledged_at else "transmitted" if alert.transmitted_at else "pending"
         ),

@@ -116,10 +116,11 @@ it.
 **Cost/abuse controls**, since every call spends real money against your
 Anthropic account:
 - A global daily call cap (`ROFEHAI_AGENT_DAILY_LIMIT`, default 100) —
-  once reached, the endpoint returns 429 until the next day. This is a
-  blunt instrument (global, not per-user), appropriate for a shared-
-  passcode demo — real per-user quotas need real accounts, which don't
-  exist yet (see Roadmap).
+  once reached, the endpoint returns 429 until the next day. This is
+  still a blunt instrument (global, not per-user) even though real
+  accounts now exist — per-user quotas would need the rate limiter
+  itself to key off the authenticated user, which hasn't been wired up
+  yet (see Roadmap).
 - Conversation history is capped to the most recent `MAX_HISTORY_MESSAGES`
   (20) turns per call, so a long-running conversation doesn't grow the
   request (and cost) unboundedly.
@@ -128,10 +129,11 @@ Anthropic account:
   used — real observability, not just "hope it's fine." Logs metadata
   only, not conversation content.
 
-**What's still missing**, stated plainly: no per-user auth (the shared
-gate passcode is the only access control), no systematic testing of the
-model's live behavior beyond the cases in `test_agent.py` and manual
-spot-checks, no monitoring/alerting on top of the usage log. See
+**What's still missing**, stated plainly: the agent endpoint itself
+doesn't yet require a real login (any gate-passed session can call it),
+no per-user rate limits (still global, see above), no systematic testing
+of the model's live behavior beyond the cases in `test_agent.py` and
+manual spot-checks, no monitoring/alerting on top of the usage log. See
 `docs/ARCHITECTURE.md` for the honest production-readiness assessment.
 
 ## Clinical relay & response (near-real-time alerting)
@@ -282,20 +284,42 @@ Added on top of the initial reference implementation, still well short of
   suite on every push/PR.
 - **Error handling**: unhandled exceptions return a generic 500 without
   leaking stack traces; the real error is logged server-side.
-- **Access gate**: `frontend/gate.html` is a combined About + NDA
-  acknowledgment + passcode page shown before the dashboard
-  (`frontend/index.html` redirects here if the session hasn't passed it).
-  This is a **soft, session-scoped gate for a link-shared demo** — it
-  keeps casual/unintended visitors out and gives every visitor the
-  context a cold landing on the dashboard didn't provide (what this is,
-  who it's for, how to use it). It is **not** a real per-user
-  authentication system: there's one shared passcode
-  (`ROFEHAI_GATE_CODE` env var, default `rofehai-preview-2026` — change
-  this before sharing the link), no individual accounts, and the
-  check is only as strong as keeping that one passcode private. Real,
-  per-user accounts (individual credentials, sessions, roles) are a
-  separate, larger piece of work — see Roadmap. A "Sign out" link in the
-  dashboard header clears the session flag and returns to the gate.
+- **Access gate — real per-user accounts**: `frontend/gate.html` is a
+  username/password login form (with NDA acknowledgment and a
+  show/hide password toggle), backed by real accounts in
+  `backend/app/core/user_auth.py`: bcrypt-hashed passwords, server-side
+  sessions with opaque (non-JWT) tokens that can be immediately and
+  completely revoked on sign-out — confirmed by direct testing that a
+  signed-out token no longer resolves to a user at all, not just that
+  the browser forgot it.
+
+  **No public signup.** Accounts are created by an admin via
+  `POST /api/auth/users`, protected by `ROFEHAI_ADMIN_KEY` — a
+  **separate** env var from `ROFEHAI_API_KEY` on purpose: reusing the
+  same variable would mean setting a key just to create accounts also
+  locks the entire public dashboard behind that key, since
+  `ROFEHAI_API_KEY` (if set) requires every `/api/*` request to carry
+  it. This exact coupling bug was caught by running the full login flow
+  live before shipping it, not assumed away.
+
+  **Real attribution, not spoofable**: countermeasure logs and alert
+  acknowledgments use the authenticated user's identity automatically
+  (sent via `Authorization: Bearer <token>` on every request) — a
+  logged-in user's real name always overrides any name submitted in the
+  request body, confirmed by a test that attempts exactly that spoof.
+
+  Every login attempt — NDA acknowledged or not, credentials correct or
+  not — is logged server-side (`db.GateAccessLog`, tied to the attempted
+  username and, on success, the real user id). The password itself is
+  never stored in plaintext or logged anywhere.
+
+  **What's still honestly not built**: no password reset flow, no
+  roles/permissions (every account can see everything), no rate
+  limiting on login attempts specifically (the agent's separate rate
+  limit doesn't cover this), no self-service signup (by design, for
+  now). The old shared-passcode endpoint (`POST /api/gate/check`) still
+  exists in the code for backward compatibility but is no longer used by
+  the frontend.
 
 ## Disclaimers
 

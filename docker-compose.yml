@@ -9,6 +9,7 @@ services:
       - ROFEHAI_GATE_CODE=${ROFEHAI_GATE_CODE:-}
       - ROFEHAI_API_KEY=${ROFEHAI_API_KEY:-}
       - ROFEHAI_DATABASE_URL=${ROFEHAI_DATABASE_URL:-}
+      - ROFEHAI_ADMIN_KEY=${ROFEHAI_ADMIN_KEY:-}
 
   frontend:
     build: ./frontend

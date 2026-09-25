@@ -65,6 +65,7 @@
 
     wireFleetChatForm();
     wireAlertsControls();
+    wireSignOut();
     refreshCommsLinkUI();
     refreshAlertsBadge();
     if (crew.length) selectCrew(crew[0].id, crew[0].name);
@@ -344,6 +345,25 @@
           legend: { labels: { color: "#E8ECF6" } },
         },
       },
+    });
+  }
+
+  function wireSignOut() {
+    const nameEl = document.getElementById("signed-in-as");
+    const displayName = sessionStorage.getItem("rofehai_display_name");
+    if (nameEl && displayName) nameEl.textContent = `Signed in as ${displayName}`;
+
+    document.getElementById("signout-link").addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        await RofehAPI.logout(); // best-effort: actually revokes the session server-side, not just client-side
+      } catch (err) {
+        // Even if the network call fails, still clear locally and redirect --
+        // a failed revocation shouldn't trap the user on the dashboard.
+      }
+      sessionStorage.removeItem("rofehai_session_token");
+      sessionStorage.removeItem("rofehai_display_name");
+      window.location.href = "gate.html";
     });
   }
 

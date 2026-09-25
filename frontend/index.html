@@ -11,7 +11,7 @@
   // Gate guard: redirect to gate.html unless this browser session already
   // passed it. This is a soft, session-scoped check for a link-shared demo,
   // not a real per-user auth system -- see gate.html / README.
-  if (sessionStorage.getItem("rofehai_gate_passed") !== "1") {
+  if (!sessionStorage.getItem("rofehai_session_token")) {
     window.location.href = "gate.html";
   }
 </script>
@@ -33,6 +33,7 @@
       </div>
       <div class="topbar-status" id="system-status">
         <a href="gate.html" style="color:var(--text-2); text-decoration:none; margin-right:16px; border-bottom:1px dotted var(--text-3);">About / how to use</a>
+        <span id="signed-in-as" style="color:var(--text-3); margin-right:16px; font-size:12px;"></span>
         <a href="#" id="signout-link" style="color:var(--text-2); text-decoration:none; margin-right:16px; border-bottom:1px dotted var(--text-3);">Sign out</a>
         <span class="status-dot status-dot--nominal"></span> demo data — synthetic
       </div>
@@ -87,13 +88,6 @@
     </footer>
   </div>
 
-  <script>
-    document.getElementById("signout-link").addEventListener("click", (e) => {
-      e.preventDefault();
-      sessionStorage.removeItem("rofehai_gate_passed");
-      window.location.href = "gate.html";
-    });
-  </script>
   <script src="js/config.js"></script>
   <script src="js/api.js"></script>
   <script src="js/app.js"></script>

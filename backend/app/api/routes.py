@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.core import agent as agent_core
 from app.core import countermeasures as cm
 from app.core import db
 from app.core import monitoring
+from app.core import user_auth
 from app.core.digital_twin import registry
 from app.core.domains import DOMAIN_REGISTRY, active_domains, all_domains
 from app.core.seeding import ensure_seeded as _ensure_seeded
@@ -35,11 +36,140 @@ DEFAULT_GATE_CODE = "rofehai-preview-2026"  # change via ROFEHAI_GATE_CODE befor
 
 
 @router.post("/gate/check")
-def gate_check(payload: dict):
+def gate_check(payload: dict, request: Request):
     configured = os.environ.get(GATE_CODE_ENV_VAR) or DEFAULT_GATE_CODE
     submitted = (payload or {}).get("code", "")
-    if submitted != configured:
+    nda_acknowledged = bool((payload or {}).get("nda_acknowledged", False))
+    success = submitted == configured
+
+    # Real, server-side audit trail -- see db.GateAccessLog. Logged
+    # regardless of outcome, so failed attempts are visible too. Behind
+    # Cloudflare's proxy, the real client IP is in X-Forwarded-For, not
+    # request.client.host (which would just be Cloudflare's own edge IP).
+    forwarded_for = request.headers.get("x-forwarded-for")
+    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (request.client.host if request.client else None)
+    db.log_gate_attempt(
+        nda_acknowledged=nda_acknowledged,
+        success=success,
+        ip_address=client_ip,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    if not success:
         raise HTTPException(status_code=401, detail="Incorrect access code")
+    return {"ok": True}
+
+
+@router.get("/gate/audit-log")
+def gate_audit_log(limit: int = 100):
+    """Real observability into gate access attempts -- who tried, when,
+    whether they acknowledged the NDA, whether the code was correct.
+    Never returns the submitted passcode itself."""
+    attempts = db.recent_gate_attempts(limit)
+    return [
+        {
+            "nda_acknowledged": a.nda_acknowledged,
+            "success": a.success,
+            "ip_address": a.ip_address,
+            "user_agent": a.user_agent,
+            "created_at": a.created_at.isoformat(),
+        }
+        for a in attempts
+    ]
+
+
+# --- Real per-user authentication -----------------------------------------
+# Replaces the shared-passcode gate's model (anyone who knows the secret is
+# indistinguishable from anyone else) with actual accounts. No public
+# signup -- see user_auth.py's module docstring.
+
+ADMIN_KEY_ENV_VAR = "ROFEHAI_ADMIN_KEY"
+
+
+def _require_admin_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Deliberately a SEPARATE env var from ROFEHAI_API_KEY (which, if
+    set, requires every /api/* request to carry it). Reusing that same
+    variable here would mean an admin setting a key just to create
+    accounts accidentally locks the entire public dashboard behind that
+    same key too -- a real bug caught by actually running the full login
+    flow end to end, not just unit tests. FAILS CLOSED if unset (unlike
+    the general API key, which defaults open for local-dev convenience)
+    -- account creation is more sensitive than general read access."""
+    configured_key = os.environ.get(ADMIN_KEY_ENV_VAR)
+    if not configured_key:
+        raise HTTPException(
+            status_code=503,
+            detail=f"{ADMIN_KEY_ENV_VAR} must be set on the server to create accounts.",
+        )
+    if x_api_key != configured_key:
+        raise HTTPException(status_code=401, detail="Missing or invalid X-API-Key header")
+
+
+def get_current_user(authorization: str | None = Header(default=None)):
+    """FastAPI dependency: resolves the real authenticated user from a
+    'Authorization: Bearer <token>' header, or None if absent/invalid/
+    expired. Callers that require a real user (not just 'someone with
+    the passcode') should check for None themselves -- see
+    acknowledge_alert and log_countermeasure below for how attribution
+    uses this without hard-requiring login everywhere yet."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization[len("Bearer "):]
+    return user_auth.resolve_session(token)
+
+
+@router.post("/auth/users")
+def create_user_account(payload: dict, x_api_key: str | None = Header(default=None)):
+    _require_admin_key(x_api_key)
+    username = (payload or {}).get("username", "").strip()
+    password = (payload or {}).get("password", "")
+    display_name = (payload or {}).get("display_name", "").strip() or username
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="username and password are required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if db.get_user_by_username(username):
+        raise HTTPException(status_code=409, detail=f"username '{username}' already exists")
+    user = db.create_user(username, user_auth.hash_password(password), display_name)
+    return {"id": user.id, "username": user.username, "display_name": user.display_name}
+
+
+@router.get("/auth/users")
+def list_user_accounts(x_api_key: str | None = Header(default=None)):
+    _require_admin_key(x_api_key)
+    users = db.list_users()
+    return [{"id": u.id, "username": u.username, "display_name": u.display_name, "is_active": u.is_active} for u in users]
+
+
+@router.post("/auth/login")
+def login(payload: dict, request: Request):
+    username = (payload or {}).get("username", "").strip()
+    password = (payload or {}).get("password", "")
+    nda_acknowledged = bool((payload or {}).get("nda_acknowledged", False))
+
+    forwarded_for = request.headers.get("x-forwarded-for")
+    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (request.client.host if request.client else None)
+    user_agent = request.headers.get("user-agent")
+
+    user = db.get_user_by_username(username)
+    success = bool(user and user.is_active and user_auth.verify_password(password, user.password_hash))
+
+    db.log_gate_attempt(
+        nda_acknowledged=nda_acknowledged, success=success, ip_address=client_ip, user_agent=user_agent,
+        username_attempted=username, user_id=user.id if (success and user) else None,
+    )
+
+    if not success:
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+
+    token = user_auth.create_session_token(user.id)
+    return {"token": token, "display_name": user.display_name, "username": user.username}
+
+
+@router.post("/auth/logout")
+def logout(authorization: str | None = Header(default=None)):
+    if authorization and authorization.startswith("Bearer "):
+        db.delete_session(authorization[len("Bearer "):])
     return {"ok": True}
 
 
@@ -182,16 +312,21 @@ def get_alert(alert_id: int):
 
 
 @router.post("/alerts/{alert_id}/acknowledge")
-def acknowledge_alert(alert_id: int, payload: dict | None = None):
+def acknowledge_alert(alert_id: int, payload: dict | None = None, authorization: str | None = Header(default=None)):
     """The human-in-the-loop confirmation point: a clinician marks an
-    alert as reviewed. This never happens automatically."""
+    alert as reviewed. This never happens automatically. Attribution
+    prefers the real authenticated user (cannot be spoofed) over a
+    free-typed name in the payload, which is only a fallback for anyone
+    not logged in via the real account system."""
     alert = db.get_alert(alert_id)
     if alert is None:
         raise HTTPException(status_code=404, detail=f"Unknown alert id {alert_id}")
     if alert.transmitted_at is None:
         raise HTTPException(status_code=400, detail="Cannot acknowledge an alert that hasn't been transmitted yet")
     note = (payload or {}).get("note")
-    updated = db.acknowledge_alert(alert_id, note)
+    user = get_current_user(authorization)
+    actor_name = user.display_name if user else (payload or {}).get("actor_name")
+    updated = db.acknowledge_alert(alert_id, actor_name, note)
     return monitoring._alert_to_dict(updated)
 
 
@@ -225,7 +360,10 @@ def alert_latency_metrics():
 
 
 @router.post("/countermeasures/log")
-def log_countermeasure(entry: CountermeasureLogEntry):
+def log_countermeasure(entry: CountermeasureLogEntry, authorization: str | None = Header(default=None)):
+    user = get_current_user(authorization)
+    if user:
+        entry.actor_name = user.display_name  # real identity overrides any free-typed name -- can't be spoofed
     db.save_countermeasure_log(entry)
     return {"logged": True}
 

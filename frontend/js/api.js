@@ -1,8 +1,13 @@
 window.RofehAPI = (() => {
   const BASE = window.ROFEHAI_CONFIG.API_BASE;
 
+  function authHeaders() {
+    const token = sessionStorage.getItem("rofehai_session_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
   async function get(path) {
-    const res = await fetch(`${BASE}${path}`);
+    const res = await fetch(`${BASE}${path}`, { headers: { ...authHeaders() } });
     if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
     return res.json();
   }
@@ -10,7 +15,7 @@ window.RofehAPI = (() => {
   async function post(path, body) {
     const res = await fetch(`${BASE}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`POST ${path} failed: ${res.status}`);
@@ -36,5 +41,6 @@ window.RofehAPI = (() => {
     getCommsLink: () => get("/comms/link"),
     setCommsLink: (available) => post("/comms/link", { available }),
     getLatencyMetrics: () => get("/alerts/metrics/latency"),
+    logout: () => post("/auth/logout", {}),
   };
 })();

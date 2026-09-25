@@ -42,6 +42,7 @@ class CountermeasureLogRecord(SQLModel, table=True):
     countermeasure_id: str
     mission_day: int
     notes: str | None = None
+    actor_name: str | None = None
     logged_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -126,7 +127,51 @@ class AlertRecord(SQLModel, table=True):
     queued_at: datetime | None = None
     transmitted_at: datetime | None = None
     acknowledged_at: datetime | None = None
+    acknowledged_by: str | None = None  # attribution: who acknowledged (lightweight, no accounts -- see README)
     acknowledged_by_note: str | None = None
+
+
+class User(SQLModel, table=True):
+    """A real, individually-attributable account. No public signup --
+    accounts are created by an admin (see POST /api/auth/users, protected
+    by ROFEHAI_API_KEY) for invited reviewers/collaborators, matching the
+    'contact the RofehAI team' language already in the gate. Passwords
+    are bcrypt-hashed; the plaintext is never stored or logged anywhere."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(unique=True, index=True)
+    password_hash: str
+    display_name: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    is_active: bool = Field(default=True)  # allows revoking access without deleting the audit trail
+
+
+class UserSession(SQLModel, table=True):
+    """A real server-side session -- the token is opaque and random, not
+    a JWT with embedded claims, so a session can be immediately and
+    completely invalidated by deleting this row (revocation is real, not
+    just 'wait for expiry')."""
+
+    token: str = Field(primary_key=True)
+    user_id: int = Field(index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime
+
+
+class GateAccessLog(SQLModel, table=True):
+    """Real, server-side record of every login/gate attempt -- the NDA
+    acknowledgment, whether it succeeded, and which real user account (if
+    any) it was. Does NOT log the submitted password itself, only the
+    pass/fail outcome."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    username_attempted: str | None = None
+    user_id: int | None = None
+    nda_acknowledged: bool
+    success: bool
+    ip_address: str | None = None
+    user_agent: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
 
 
 class CommsLinkState(SQLModel, table=True):
@@ -311,6 +356,74 @@ def mark_alert_queued(alert_id: int) -> AlertRecord | None:
         return alert
 
 
+def log_gate_attempt(
+    nda_acknowledged: bool, success: bool, ip_address: str | None, user_agent: str | None,
+    username_attempted: str | None = None, user_id: int | None = None,
+) -> None:
+    with Session(engine) as session:
+        session.add(
+            GateAccessLog(
+                nda_acknowledged=nda_acknowledged, success=success,
+                ip_address=ip_address, user_agent=user_agent,
+                username_attempted=username_attempted, user_id=user_id,
+            )
+        )
+        session.commit()
+
+
+def create_user(username: str, password_hash: str, display_name: str) -> User:
+    with Session(engine) as session:
+        user = User(username=username, password_hash=password_hash, display_name=display_name)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+def get_user_by_username(username: str) -> User | None:
+    with Session(engine) as session:
+        stmt = select(User).where(User.username == username)
+        return session.exec(stmt).first()
+
+
+def get_user_by_id(user_id: int) -> User | None:
+    with Session(engine) as session:
+        return session.get(User, user_id)
+
+
+def list_users():
+    with Session(engine) as session:
+        return session.exec(select(User).order_by(User.created_at)).all()
+
+
+def create_session(token: str, user_id: int, expires_at: datetime) -> UserSession:
+    with Session(engine) as session:
+        s = UserSession(token=token, user_id=user_id, expires_at=expires_at)
+        session.add(s)
+        session.commit()
+        session.refresh(s)
+        return s
+
+
+def get_session(token: str) -> UserSession | None:
+    with Session(engine) as session:
+        return session.get(UserSession, token)
+
+
+def delete_session(token: str) -> None:
+    with Session(engine) as session:
+        s = session.get(UserSession, token)
+        if s:
+            session.delete(s)
+            session.commit()
+
+
+def recent_gate_attempts(limit: int = 100):
+    with Session(engine) as session:
+        stmt = select(GateAccessLog).order_by(GateAccessLog.created_at.desc()).limit(limit)
+        return session.exec(stmt).all()
+
+
 def get_comms_link_state() -> CommsLinkState:
     with Session(engine) as session:
         state = session.get(CommsLinkState, 1)
@@ -376,12 +489,13 @@ def get_alert(alert_id: int) -> AlertRecord | None:
         return session.get(AlertRecord, alert_id)
 
 
-def acknowledge_alert(alert_id: int, note: str | None) -> AlertRecord | None:
+def acknowledge_alert(alert_id: int, actor_name: str | None, note: str | None) -> AlertRecord | None:
     with Session(engine) as session:
         alert = session.get(AlertRecord, alert_id)
         if alert is None:
             return None
         alert.acknowledged_at = datetime.now(UTC)
+        alert.acknowledged_by = actor_name
         alert.acknowledged_by_note = note
         session.add(alert)
         session.commit()

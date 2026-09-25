@@ -67,7 +67,7 @@
         <span class="name">RofehAI</span>
       </div>
 
-      <p class="gate-p"><strong>What this is:</strong> a working reference implementation of RofehAI's proposed architecture — a personalized, trajectory-based health-risk monitoring system for long-duration spaceflight crews, starting with SANS (spaceflight-associated vision risk) and immune dysregulation.</p>
+      <p class="gate-p"><strong>What this is:</strong> a working reference implementation of RofehAI's proposed architecture — a personalized, trajectory-based health-risk monitoring platform for long-duration spaceflight crews, starting with SANS (spaceflight-associated vision risk) and immune dysregulation. Includes an LLM briefing agent (single-crew and fleet-wide questions, with persistent memory) and a near-real-time clinical alert relay demonstrating detection under a simulated communication delay.</p>
 
       <div class="gate-section-title">Who this is for</div>
       <ul class="gate-list">
@@ -85,9 +85,11 @@
 
       <div class="gate-section-title">How to use it</div>
       <ul class="gate-list">
-        <li>Select a crew member from the roster on the left</li>
-        <li>Review their SANS and immune-dysregulation risk trajectory, confidence, and driving signals</li>
+        <li>Select a crew member from the roster on the left to review their SANS and immune-dysregulation risk trajectory, confidence, and driving signals</li>
         <li>Review any suggested countermeasure — the system only ever suggests; a person decides and logs the action</li>
+        <li>Ask the briefing agent a question about a crew member (e.g. "how is this person trending?") — it reasons across active domains and cites its sources; try a follow-up question too, it remembers the conversation</li>
+        <li>Use "Fleet-wide triage" in the sidebar to ask about the whole crew at once (e.g. "who needs review today?")</li>
+        <li>Use "Clinical alerts" to run a detection sweep, toggle the simulated comms link, and review/acknowledge any alerts — this demonstrates near-real-time clinical relay under a simulated communication delay</li>
       </ul>
 
       <form class="gate-form" id="gate-form">
@@ -95,27 +97,42 @@
           <input type="checkbox" id="nda-ack" required />
           <label for="nda-ack">I agree to keep the contents of this demo confidential and not distribute access without authorization, per RofehAI's proprietary/NDA notice.</label>
         </div>
-        <input class="gate-input" id="gate-code" type="password" placeholder="Access code" autocomplete="off" required />
-        <div class="gate-error" id="gate-error">Incorrect access code. Please try again.</div>
-        <button class="gate-btn" type="submit" id="gate-submit">Enter dashboard</button>
+        <input class="gate-input" id="gate-username" type="text" placeholder="Username" autocomplete="username" required />
+        <div style="position:relative;">
+          <input class="gate-input" id="gate-password" type="password" placeholder="Password" autocomplete="current-password" required style="padding-right:44px; width:100%; box-sizing:border-box;" />
+          <button type="button" id="gate-password-toggle" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text-3); cursor:pointer; font-size:12px; padding:4px 6px;">Show</button>
+        </div>
+        <div class="gate-error" id="gate-error">Incorrect username or password. Please try again.</div>
+        <button class="gate-btn" type="submit" id="gate-submit">Sign in</button>
       </form>
 
-      <div class="gate-footer">Confidential — concept stage. Contact the RofehAI team if you need an access code.</div>
+      <div class="gate-footer">Confidential — concept stage. Contact the RofehAI team for an account.</div>
     </div>
   </div>
 
   <script src="js/config.js"></script>
   <script>
-    const alreadyPassed = sessionStorage.getItem("rofehai_gate_passed") === "1";
+    const alreadyPassed = sessionStorage.getItem("rofehai_session_token");
     const form = document.getElementById("gate-form");
     const errorEl = document.getElementById("gate-error");
     const submitBtn = document.getElementById("gate-submit");
+    const usernameInput = document.getElementById("gate-username");
+    const passwordInput = document.getElementById("gate-password");
+    const toggleBtn = document.getElementById("gate-password-toggle");
+
+    toggleBtn.addEventListener("click", () => {
+      const showing = passwordInput.type === "text";
+      passwordInput.type = showing ? "password" : "text";
+      toggleBtn.textContent = showing ? "Show" : "Hide";
+    });
 
     if (alreadyPassed) {
       document.getElementById("nda-ack").checked = true;
-      document.getElementById("gate-code").removeAttribute("required");
-      document.getElementById("gate-code").placeholder = "Already unlocked this session";
-      document.getElementById("gate-code").disabled = true;
+      usernameInput.removeAttribute("required");
+      passwordInput.removeAttribute("required");
+      usernameInput.disabled = true;
+      passwordInput.disabled = true;
+      passwordInput.placeholder = "Already signed in this session";
       submitBtn.textContent = "Continue to dashboard";
     }
 
@@ -127,21 +144,25 @@
       }
       errorEl.style.display = "none";
       submitBtn.disabled = true;
-      submitBtn.textContent = "Checking…";
-      const code = document.getElementById("gate-code").value;
+      submitBtn.textContent = "Signing in…";
+      const username = usernameInput.value;
+      const password = passwordInput.value;
+      const ndaAcknowledged = document.getElementById("nda-ack").checked;
       try {
-        const res = await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/gate/check`, {
+        const res = await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code }),
+          body: JSON.stringify({ username, password, nda_acknowledged: ndaAcknowledged }),
         });
-        if (!res.ok) throw new Error("bad code");
-        sessionStorage.setItem("rofehai_gate_passed", "1");
+        if (!res.ok) throw new Error("bad credentials");
+        const data = await res.json();
+        sessionStorage.setItem("rofehai_session_token", data.token);
+        sessionStorage.setItem("rofehai_display_name", data.display_name);
         window.location.href = "index.html";
       } catch (err) {
         errorEl.style.display = "block";
         submitBtn.disabled = false;
-        submitBtn.textContent = "Enter dashboard";
+        submitBtn.textContent = "Sign in";
       }
     });
   </script>

@@ -173,6 +173,24 @@ def logout(authorization: str | None = Header(default=None)):
     return {"ok": True}
 
 
+@router.post("/auth/change-password")
+def change_password(payload: dict, authorization: str | None = Header(default=None)):
+    """Self-service password change -- requires the CURRENT password too,
+    not just a valid session token, so a stolen/leftover session alone
+    can't be used to lock the real owner out. Never logs either password."""
+    user = get_current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    current_password = (payload or {}).get("current_password", "")
+    new_password = (payload or {}).get("new_password", "")
+    if not user_auth.verify_password(current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    db.update_user_password(user.id, user_auth.hash_password(new_password))
+    return {"ok": True}
+
+
 def _require_domain(domain_id: str) -> None:
     if domain_id not in DOMAIN_REGISTRY:
         raise HTTPException(status_code=404, detail=f"Unknown health domain '{domain_id}'")

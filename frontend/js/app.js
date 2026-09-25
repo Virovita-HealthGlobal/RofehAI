@@ -348,6 +348,62 @@
     });
   }
 
+  function renderChangePasswordView() {
+    viewingAlerts = false;
+    activeCrewId = null;
+    document.querySelectorAll(".roster-item").forEach((el) => el.classList.remove("is-active"));
+
+    detailPanel.innerHTML = `
+      <div class="detail-heading"><h1>Change password</h1></div>
+      <div class="panel" style="max-width:420px;">
+        <form id="change-password-form">
+          <label style="display:block; font-size:12px; color:var(--text-2); margin-bottom:4px;">Current password</label>
+          <input class="gate-input" id="current-password" type="password" required style="width:100%; box-sizing:border-box; margin-bottom:14px;" />
+          <label style="display:block; font-size:12px; color:var(--text-2); margin-bottom:4px;">New password (min 8 characters)</label>
+          <input class="gate-input" id="new-password" type="password" required minlength="8" style="width:100%; box-sizing:border-box; margin-bottom:14px;" />
+          <label style="display:block; font-size:12px; color:var(--text-2); margin-bottom:4px;">Confirm new password</label>
+          <input class="gate-input" id="confirm-password" type="password" required style="width:100%; box-sizing:border-box; margin-bottom:14px;" />
+          <div id="change-password-error" style="color:var(--status-critical); font-size:13px; margin-bottom:12px; display:none;"></div>
+          <div id="change-password-success" style="color:var(--status-nominal); font-size:13px; margin-bottom:12px; display:none;">Password changed successfully.</div>
+          <button class="btn is-primary" type="submit" id="change-password-submit">Update password</button>
+        </form>
+      </div>
+    `;
+
+    document.getElementById("change-password-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorEl = document.getElementById("change-password-error");
+      const successEl = document.getElementById("change-password-success");
+      const submitBtn = document.getElementById("change-password-submit");
+      errorEl.style.display = "none";
+      successEl.style.display = "none";
+
+      const current = document.getElementById("current-password").value;
+      const next = document.getElementById("new-password").value;
+      const confirm = document.getElementById("confirm-password").value;
+
+      if (next !== confirm) {
+        errorEl.textContent = "New password and confirmation don't match.";
+        errorEl.style.display = "block";
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Updating…";
+      try {
+        await RofehAPI.changePassword(current, next);
+        successEl.style.display = "block";
+        document.getElementById("change-password-form").reset();
+      } catch (err) {
+        errorEl.textContent = "Current password is incorrect, or the new password is too short.";
+        errorEl.style.display = "block";
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Update password";
+      }
+    });
+  }
+
   function wireSignOut() {
     const nameEl = document.getElementById("signed-in-as");
     const displayName = sessionStorage.getItem("rofehai_display_name");
@@ -364,6 +420,11 @@
       sessionStorage.removeItem("rofehai_session_token");
       sessionStorage.removeItem("rofehai_display_name");
       window.location.href = "gate.html";
+    });
+
+    document.getElementById("change-password-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      renderChangePasswordView();
     });
   }
 

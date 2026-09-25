@@ -313,13 +313,21 @@ Added on top of the initial reference implementation, still well short of
   username and, on success, the real user id). The password itself is
   never stored in plaintext or logged anywhere.
 
-  **What's still honestly not built**: no password reset flow, no
-  roles/permissions (every account can see everything), no rate
-  limiting on login attempts specifically (the agent's separate rate
+  **What's still honestly not built**: no password reset flow (but see
+  self-service change below — a logged-in user CAN update their own
+  password), no roles/permissions (every account can see everything), no
+  rate limiting on login attempts specifically (the agent's separate rate
   limit doesn't cover this), no self-service signup (by design, for
   now). The old shared-passcode endpoint (`POST /api/gate/check`) still
   exists in the code for backward compatibility but is no longer used by
   the frontend.
+
+  **Self-service password change**: once logged in, a "Change password"
+  link in the dashboard lets a user set a new password themselves —
+  requires the current password (not just a valid session token, so a
+  leftover/stolen session alone can't lock the real owner out). Verified
+  end-to-end: after a change, the old password genuinely stops working
+  and the new one works, not just that the endpoint returned success.
 
 ## Disclaimers
 

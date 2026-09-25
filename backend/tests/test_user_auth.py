@@ -223,3 +223,58 @@ def test_log_countermeasure_attributes_to_real_user_when_logged_in(monkeypatch):
     logs = db.load_countermeasure_log("crew-01")
     matching = [l for l in logs if l.mission_day == 100 and l.countermeasure_id == "lbnp-protocol"]
     assert matching[-1].actor_name == "Real Dr. Jones"
+
+
+# --- Self-service password change -----------------------------------------
+
+def test_change_password_requires_login():
+    r = client.post("/api/auth/change-password", json={"current_password": "x", "new_password": "new-password-123"})
+    assert r.status_code == 401
+
+
+def test_change_password_requires_correct_current_password(monkeypatch):
+    _make_user(monkeypatch, username="pwchange1", password="original-password-1")
+    login_r = client.post("/api/auth/login", json={"username": "pwchange1", "password": "original-password-1"})
+    token = login_r.json()["token"]
+
+    r = client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "wrong-current-password", "new_password": "brand-new-password-1"},
+    )
+    assert r.status_code == 401
+
+
+def test_change_password_rejects_short_new_password(monkeypatch):
+    _make_user(monkeypatch, username="pwchange2", password="original-password-2")
+    login_r = client.post("/api/auth/login", json={"username": "pwchange2", "password": "original-password-2"})
+    token = login_r.json()["token"]
+
+    r = client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "original-password-2", "new_password": "short"},
+    )
+    assert r.status_code == 400
+
+
+def test_change_password_actually_changes_it(monkeypatch):
+    """Real end-to-end proof: after changing, the OLD password no longer
+    logs in and the NEW password does -- not just that the endpoint
+    returned 200."""
+    _make_user(monkeypatch, username="pwchange3", password="the-old-password-1")
+    login_r = client.post("/api/auth/login", json={"username": "pwchange3", "password": "the-old-password-1"})
+    token = login_r.json()["token"]
+
+    change_r = client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_password": "the-old-password-1", "new_password": "the-brand-new-password-1"},
+    )
+    assert change_r.status_code == 200
+
+    old_login = client.post("/api/auth/login", json={"username": "pwchange3", "password": "the-old-password-1"})
+    assert old_login.status_code == 401
+
+    new_login = client.post("/api/auth/login", json={"username": "pwchange3", "password": "the-brand-new-password-1"})
+    assert new_login.status_code == 200

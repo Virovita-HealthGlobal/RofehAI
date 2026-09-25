@@ -386,6 +386,15 @@ def get_user_by_username(username: str) -> User | None:
         return session.exec(stmt).first()
 
 
+def update_user_password(user_id: int, new_password_hash: str) -> None:
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user:
+            user.password_hash = new_password_hash
+            session.add(user)
+            session.commit()
+
+
 def get_user_by_id(user_id: int) -> User | None:
     with Session(engine) as session:
         return session.get(User, user_id)

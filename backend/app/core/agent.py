@@ -263,7 +263,9 @@ def _compose_final_answer(
         tone = "insufficient_data"
     lines = [OPENING_TONES[tone]]
     sources: list[AgentSource] = []
-    crew_name_by_id = {c.id: c.name for c in CREW}
+    from app.core import db as _db  # local import: avoids a module-level circular import (see recall block above)
+    crew_name_overrides = _db.get_crew_name_overrides()
+    crew_name_by_id = {c.id: crew_name_overrides.get(c.id, c.name) for c in CREW}
 
     def render_entry(lines_out: list[str], sources_out: list[AgentSource], section_crew_id: str, domain_id: str, risk, include_cm: bool) -> None:
         domain = DOMAIN_REGISTRY.get(domain_id)

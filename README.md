@@ -203,11 +203,46 @@ from the same frontend container, via host-based routing in
 This was verified directly, not just assumed from reading the config: a
 real nginx instance was started locally with the exact file layout
 Docker builds, and `curl` with different `Host` headers confirmed each
-hostname actually returns its own distinct page. The landing page's
-hero layout uses flexbox rather than CSS Grid specifically because that
-choice was verified against a real (if old-engine) renderer during
-design review — Grid would very likely still work in real browsers, but
-flexbox removed the ambiguity entirely rather than trusting it blind.
+hostname actually returns its own distinct page.
+
+The marketing page also has: a "Recognized by" section with the real
+NVIDIA Inception and CAI (Center for Advancing Innovation) badge assets
+(the official kit, not a screenshot), plus an AWS Startups text chip
+pending a real badge asset; `privacy.html` and `terms.html` — genuine,
+specific drafts (not filler) describing exactly what this site collects
+and does, explicitly labeled as pending real attorney review, matching
+the same honesty pattern as the patent draft elsewhere in this project;
+and `contact.html`, a general-inquiry form (`POST /api/contact`) that
+emails the same admin recipients as signup approvals — verified live
+that a real routing test confirms every new page and asset actually
+loads under `rofehai.com`, and `app.rofehai.com` remains unaffected.
+
+## Mission-day slider and crew renaming
+
+- **Mission-day slider** (dashboard header): scrubs the currently-viewed
+  crew member's risk cards, chart, and countermeasures to "as of" any
+  day from 30 to 210, using the `mission_day` parameter the scoring
+  endpoints already supported. Live-updates the label while dragging,
+  only re-fetches on release (not per-tick), verified end-to-end with a
+  real session token and real API calls intercepted to confirm the
+  correct `mission_day` value on each release. The roster's own
+  status dots always reflect the full mission length, unaffected by the
+  slider, to avoid confusing side effects on the sidebar.
+
+- **Crew renaming** (`PUT`/`DELETE /api/crew/{id}/name`, admin-key
+  protected): relabels one of the four synthetic crew slots — e.g. for
+  a live pilot session with real reviewers — WITHOUT touching the
+  underlying synthetic health data, which stays keyed by the original
+  `crew_id`. **Deliberately not full crew CRUD**: adding or removing
+  crew members was scoped out on purpose, since each existing member has
+  a purpose-built synthetic history and a new one would either show
+  "insufficient data" for weeks of simulated time or require an
+  on-demand history generator — real work for a feature that doesn't
+  strengthen what the demo is actually trying to prove. A real gap was
+  found and fixed while building this: the fleet-wide agent built its
+  own crew-name lookup directly from the static roster, bypassing any
+  rename — a renamed crew member would show correctly in the sidebar but
+  the *old* name in an agent answer. Fixed, with a regression test.
 
 ## What the dashboard shows
 
@@ -341,24 +376,39 @@ Added on top of the initial reference implementation, still well short of
   it. This exact coupling bug was caught by running the full login flow
   live before shipping it, not assumed away.
 
-  **Self-service signup, gated by real admin approval** (`gate.html`'s
-  "Request access" link, or `POST /api/auth/signup`): the account is
-  created immediately but starts **inactive** — it cannot log in until
-  an admin clicks Approve. The admin is notified by email (via Resend)
-  containing the requester's username, display name, and NDA-
-  acknowledgment timestamp — **the password is never included in that
-  email**, hashed or otherwise; a test specifically confirms this.
-  Approve/Reject are one-click links straight from the email (each a
-  single-use token — clicking Approve twice does nothing the second
-  time, confirmed by a test). If Resend isn't configured or the send
-  fails, the pending account still exists (nothing is silently lost)
-  and the requester sees a clear error rather than a false "success."
-  A pending account that tries to log in with the *correct* password
-  gets a distinct "pending admin approval" message rather than the
-  generic wrong-credentials error — but a genuinely wrong password on a
-  pending account still gets the generic message, so guessing usernames
-  can't be used to detect which accounts exist and are just waiting on
-  approval.
+  **Self-service signup, email-only, gated by real admin approval**
+  (`gate.html`'s "Request access" link, or `POST /api/auth/signup`):
+  collects ONLY a professional email address, display name, and NDA
+  acknowledgment — **no password at signup time**. The account is
+  created immediately but starts **inactive with no password hash at
+  all**, and genuinely cannot log in under any password until two
+  separate things happen: an admin approves, AND the requester sets
+  their own password via a link sent only to them.
+
+  The admin is notified by email (via Resend) containing the
+  requester's email, display name, and NDA-acknowledgment timestamp —
+  never a password, since none exists yet. Approve/Reject are one-click
+  links straight from that email (each a single-use token — clicking
+  Approve twice does nothing the second time, confirmed by a test).
+  **Approving does not activate the account directly** — it issues a
+  second, separate single-use token and emails a "create your password"
+  link to the *requester's own inbox*, never shown to or handled by the
+  admin. The account only becomes active once the requester actually
+  submits a password through that link (`set-password.html`), confirmed
+  end-to-end by a live test: real signup form → real approve call →
+  real password-setup link → real set-password page → real login, all
+  through the actual browser forms, not just backend unit tests.
+
+  **Forgot password reuses the exact same mechanism** — same token
+  type, same `set-password.html` page, same 48-hour single-use
+  guarantee — rather than a separate system. `POST /api/auth/forgot-
+  password` always returns an identical response whether or not the
+  email has an account, confirmed by a test, so it can't be used to
+  enumerate real accounts.
+
+  If Resend isn't configured or a send fails, the pending account still
+  exists (nothing is silently lost) and the requester/admin sees a
+  clear error rather than a false "success."
 
   **Real attribution, not spoofable**: countermeasure logs and alert
   acknowledgments use the authenticated user's identity automatically
@@ -376,14 +426,14 @@ Added on top of the initial reference implementation, still well short of
   name and a failed one correctly shows nothing, never a guess.) The
   password itself is never stored in plaintext or logged anywhere.
 
-  **What's still honestly not built**: no password reset flow (but see
-  self-service change below — a logged-in user CAN update their own
-  password), no roles/permissions (every account can see everything), no
-  rate limiting on login OR signup attempts specifically (the agent's
-  separate rate limit doesn't cover this — someone could spam signup
-  requests and flood the admin's inbox), no expiry on pending signup
-  requests (an old, never-approved request sits forever unless rejected).
-  The old shared-passcode endpoint (`POST /api/gate/check`) still exists
+  **What's still honestly not built**: no roles/permissions (every
+  account can see everything), no rate limiting on login, signup, OR
+  forgot-password attempts specifically (the agent's separate rate limit
+  doesn't cover this — someone could spam signup requests and flood the
+  admin's inbox, or spam forgot-password to flood a real user's inbox),
+  no expiry on pending signup requests that are never approved or
+  rejected (they sit forever). The old shared-passcode endpoint
+  (`POST /api/gate/check`) still exists
   in the code for backward compatibility but is no longer used by the
   frontend.
 

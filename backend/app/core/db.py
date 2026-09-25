@@ -134,21 +134,39 @@ class AlertRecord(SQLModel, table=True):
 class User(SQLModel, table=True):
     """A real, individually-attributable account. Two ways to be created:
     (1) directly by an admin (POST /api/auth/users, protected by
-    ROFEHAI_ADMIN_KEY) -- these start active immediately; (2) self-service
-    signup (POST /api/auth/signup) -- these start INACTIVE and can't log
-    in until an admin approves via the emailed link. Passwords are
-    bcrypt-hashed; the plaintext is never stored, emailed, or logged
-    anywhere -- an approval notification includes the username/display
-    name/NDA-acknowledgment timestamp, never the password."""
+    ROFEHAI_ADMIN_KEY) -- these get a password immediately and start
+    active; (2) self-service signup (POST /api/auth/signup) -- these
+    start with NO PASSWORD AT ALL and INACTIVE. Signup only collects a
+    professional email + NDA acknowledgment; a password is only ever
+    created after an admin approves, via a separate single-use link sent
+    to the requester (never the admin) -- the same mechanism doubles as
+    the 'forgot password' flow. Passwords are bcrypt-hashed; the
+    plaintext is never stored, emailed, or logged anywhere -- the
+    admin's approval notification includes only the email, display name,
+    and NDA-acknowledgment timestamp."""
 
     id: int | None = Field(default=None, primary_key=True)
-    username: str = Field(unique=True, index=True)
-    password_hash: str
+    username: str = Field(unique=True, index=True)  # the requester's email, for self-service signups
+    password_hash: str | None = None  # None until the requester actually sets one via their own link
     display_name: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_active: bool = Field(default=True)  # allows revoking access without deleting the audit trail
     nda_acknowledged_at: datetime | None = None  # set at signup time, shown to the approving admin
-    approval_token: str | None = Field(default=None, index=True)  # single-use; cleared once approved/rejected
+    approval_token: str | None = Field(default=None, index=True)  # admin-facing approve/reject; single-use
+    password_set_token: str | None = Field(default=None, index=True)  # requester-facing; single-use, expires
+    password_set_token_expires_at: datetime | None = None
+
+
+class CrewNameOverride(SQLModel, table=True):
+    """Lets an admin relabel one of the four synthetic crew slots with a
+    real name (e.g. for a live pilot/testing session with real people)
+    WITHOUT touching the underlying synthetic health-signal generation,
+    which stays keyed by the original crew_id. Deliberately does not add
+    or remove crew members -- see the README for why full crew CRUD was
+    scoped out."""
+
+    crew_id: str = Field(primary_key=True)
+    display_name: str
 
 
 class UserSession(SQLModel, table=True):
@@ -376,6 +394,31 @@ def log_gate_attempt(
         session.commit()
 
 
+def set_crew_name_override(crew_id: str, display_name: str) -> None:
+    with Session(engine) as session:
+        existing = session.get(CrewNameOverride, crew_id)
+        if existing:
+            existing.display_name = display_name
+            session.add(existing)
+        else:
+            session.add(CrewNameOverride(crew_id=crew_id, display_name=display_name))
+        session.commit()
+
+
+def clear_crew_name_override(crew_id: str) -> None:
+    with Session(engine) as session:
+        existing = session.get(CrewNameOverride, crew_id)
+        if existing:
+            session.delete(existing)
+            session.commit()
+
+
+def get_crew_name_overrides() -> dict[str, str]:
+    with Session(engine) as session:
+        rows = session.exec(select(CrewNameOverride)).all()
+        return {r.crew_id: r.display_name for r in rows}
+
+
 def create_user(username: str, password_hash: str, display_name: str) -> User:
     with Session(engine) as session:
         user = User(username=username, password_hash=password_hash, display_name=display_name)
@@ -385,12 +428,13 @@ def create_user(username: str, password_hash: str, display_name: str) -> User:
         return user
 
 
-def create_pending_signup(username: str, password_hash: str, display_name: str, approval_token: str) -> User:
-    """Self-service signup -- starts INACTIVE, can't log in until an
-    admin approves via the token embedded in the notification email."""
+def create_pending_signup(username: str, display_name: str, approval_token: str) -> User:
+    """Self-service signup -- starts INACTIVE with NO PASSWORD. Can't log
+    in until an admin approves and the requester sets their own password
+    via their own single-use link."""
     with Session(engine) as session:
         user = User(
-            username=username, password_hash=password_hash, display_name=display_name,
+            username=username, password_hash=None, display_name=display_name,
             is_active=False, nda_acknowledged_at=datetime.now(UTC), approval_token=approval_token,
         )
         session.add(user)
@@ -405,17 +449,59 @@ def get_user_by_approval_token(token: str) -> User | None:
         return session.exec(stmt).first()
 
 
-def approve_pending_user(user_id: int) -> User | None:
+def approve_pending_user(user_id: int, password_set_token: str, expires_at: datetime) -> User | None:
+    """Approval does NOT activate the account directly -- it issues a
+    single-use, expiring token that only the requester (via their own
+    email) can use to actually set a password. The account stays
+    inactive until that happens, so there's never a window where an
+    account is 'active' but has no usable password."""
     with Session(engine) as session:
         user = session.get(User, user_id)
         if user is None:
             return None
-        user.is_active = True
-        user.approval_token = None  # single-use: token can never be replayed after this
+        user.approval_token = None  # single-use: the approve/reject link can never be replayed
+        user.password_set_token = password_set_token
+        user.password_set_token_expires_at = expires_at
         session.add(user)
         session.commit()
         session.refresh(user)
         return user
+
+
+def get_user_by_password_set_token(token: str) -> User | None:
+    with Session(engine) as session:
+        stmt = select(User).where(User.password_set_token == token)
+        return session.exec(stmt).first()
+
+
+def set_user_password_and_activate(user_id: int, password_hash: str) -> User | None:
+    """Used both for the initial post-approval password creation and for
+    a later 'forgot password' reset -- same mechanism, same guarantees."""
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user is None:
+            return None
+        user.password_hash = password_hash
+        user.is_active = True
+        user.password_set_token = None  # single-use: cannot be replayed
+        user.password_set_token_expires_at = None
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+def issue_password_set_token(user_id: int, token: str, expires_at: datetime) -> None:
+    """Used by 'forgot password' -- issues a fresh single-use token for
+    an EXISTING active account, reusing the same set-password mechanism
+    as initial account activation."""
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user:
+            user.password_set_token = token
+            user.password_set_token_expires_at = expires_at
+            session.add(user)
+            session.commit()
 
 
 def reject_pending_user(user_id: int) -> None:

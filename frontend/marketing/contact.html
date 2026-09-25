@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RofehAI — Contact</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<style>
+  :root {
+    --bg: #0A1020; --surface: #121A2E; --surface-2: #1A2440; --border: #263257;
+    --text-1: #E8ECF6; --text-2: #8C9AC2; --text-3: #5C6890; --accent: #4C8DFF; --nominal: #2FBF8F; --critical: #E5615C;
+    --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text-1); font-family: var(--font-sans); margin: 0; }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 70px 28px 100px; }
+  .back { display: inline-block; margin-bottom: 28px; font-size: 13px; color: var(--text-2); text-decoration: none; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  .sub { color: var(--text-2); font-size: 14.5px; margin-bottom: 30px; line-height: 1.6; }
+  label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 5px; margin-top: 14px; }
+  input, textarea {
+    width: 100%; font-family: var(--font-mono); font-size: 14px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-1); padding: 10px 12px; box-sizing: border-box;
+  }
+  textarea { resize: vertical; min-height: 110px; font-family: var(--font-sans); }
+  .error { color: var(--critical); font-size: 13px; margin-top: 12px; display: none; }
+  .success { color: var(--nominal); font-size: 14px; margin-top: 16px; display: none; }
+  .btn {
+    margin-top: 20px; width: 100%; font-family: var(--font-sans); font-size: 14px; font-weight: 600;
+    background: var(--accent); color: #0A1020; border: none; border-radius: 6px; padding: 12px; cursor: pointer;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="index.html">← Back to RofehAI</a>
+    <h1>Get in touch</h1>
+    <p class="sub">Questions before requesting a demo account, press inquiries, or anything else — send us a message and we'll get back to you.</p>
+
+    <form id="contact-form">
+      <label for="contact-name">Name</label>
+      <input id="contact-name" type="text" required />
+
+      <label for="contact-email">Email</label>
+      <input id="contact-email" type="text" required />
+
+      <label for="contact-message">Message</label>
+      <textarea id="contact-message" required></textarea>
+
+      <div class="error" id="contact-error"></div>
+      <div class="success" id="contact-success">Message sent. We'll get back to you.</div>
+      <button class="btn" type="submit" id="contact-submit">Send message</button>
+    </form>
+  </div>
+
+  <script>
+    window.ROFEHAI_CONFIG = { API_BASE: "https://api.rofehai.com/api" };
+  </script>
+  <script>
+    const form = document.getElementById("contact-form");
+    const errorEl = document.getElementById("contact-error");
+    const successEl = document.getElementById("contact-success");
+    const submitBtn = document.getElementById("contact-submit");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorEl.style.display = "none";
+      successEl.style.display = "none";
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Sending…";
+      try {
+        const res = await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/contact`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: document.getElementById("contact-name").value,
+            email: document.getElementById("contact-email").value,
+            message: document.getElementById("contact-message").value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.detail || "Something went wrong. Please try again.";
+          errorEl.style.display = "block";
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Send message";
+          return;
+        }
+        successEl.style.display = "block";
+        form.reset();
+        submitBtn.textContent = "Send message";
+      } catch (err) {
+        errorEl.textContent = "Something went wrong. Please try again.";
+        errorEl.style.display = "block";
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Send message";
+      }
+    });
+  </script>
+</body>
+</html>

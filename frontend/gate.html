@@ -97,13 +97,24 @@
           <input type="checkbox" id="nda-ack" required />
           <label for="nda-ack">I agree to keep the contents of this demo confidential and not distribute access without authorization, per RofehAI's proprietary/NDA notice.</label>
         </div>
-        <input class="gate-input" id="gate-username" type="text" placeholder="Username" autocomplete="username" required />
+        <input class="gate-input" id="gate-username" type="text" placeholder="Email" autocomplete="username" required />
         <div style="position:relative;">
           <input class="gate-input" id="gate-password" type="password" placeholder="Password" autocomplete="current-password" required style="padding-right:44px; width:100%; box-sizing:border-box;" />
           <button type="button" id="gate-password-toggle" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text-3); cursor:pointer; font-size:12px; padding:4px 6px;">Show</button>
         </div>
         <div class="gate-error" id="gate-error"></div>
         <button class="gate-btn" type="submit" id="gate-submit">Sign in</button>
+      </form>
+
+      <div style="text-align:center; margin-top:14px;">
+        <a href="#" id="show-forgot-link" style="font-size:12px; color:var(--text-2); border-bottom:1px dotted var(--text-3); text-decoration:none;">Forgot password?</a>
+      </div>
+
+      <form class="gate-form" id="forgot-form" style="display:none;">
+        <input class="gate-input" id="forgot-email" type="text" placeholder="Email" autocomplete="username" required />
+        <div class="gate-error" id="forgot-error"></div>
+        <div id="forgot-success" style="color:var(--status-nominal); font-size:13px; margin-bottom:12px; display:none;">If that email has an account, a reset link has been sent.</div>
+        <button class="gate-btn" type="submit" id="forgot-submit">Send reset link</button>
       </form>
 
       <div style="text-align:center; margin-top:14px;">
@@ -115,14 +126,10 @@
           <input type="checkbox" id="signup-nda-ack" required />
           <label for="signup-nda-ack">I agree to keep the contents of this demo confidential and not distribute access without authorization, per RofehAI's proprietary/NDA notice.</label>
         </div>
-        <input class="gate-input" id="signup-username" type="text" placeholder="Choose a username" autocomplete="username" required />
+        <input class="gate-input" id="signup-email" type="text" placeholder="Professional email" autocomplete="username" required />
         <input class="gate-input" id="signup-display-name" type="text" placeholder="Your name" autocomplete="name" required />
-        <div style="position:relative;">
-          <input class="gate-input" id="signup-password" type="password" placeholder="Choose a password (min 8 characters)" autocomplete="new-password" required minlength="8" style="padding-right:44px; width:100%; box-sizing:border-box;" />
-          <button type="button" id="signup-password-toggle" aria-label="Show password" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text-3); cursor:pointer; font-size:12px; padding:4px 6px;">Show</button>
-        </div>
         <div class="gate-error" id="signup-error"></div>
-        <div id="signup-success" style="color:var(--status-nominal); font-size:13px; margin-bottom:12px; display:none;">Request received. An admin will review it and you'll be able to sign in once approved.</div>
+        <div id="signup-success" style="color:var(--status-nominal); font-size:13px; margin-bottom:12px; display:none;">Request received. An admin will review it — check your email once approved to create a password.</div>
         <button class="gate-btn" type="submit" id="signup-submit">Request access</button>
       </form>
 
@@ -159,6 +166,7 @@
       passwordInput.placeholder = "Already signed in this session";
       submitBtn.textContent = "Continue to dashboard";
       document.getElementById("show-signup-link").style.display = "none";
+      document.getElementById("show-forgot-link").style.display = "none";
     }
 
     form.addEventListener("submit", async (e) => {
@@ -198,36 +206,44 @@
       }
     });
 
-    // --- Self-service signup (request access, pending admin approval) ---
+    // --- Self-service signup (email + NDA only, no password here) ---
     const signupForm = document.getElementById("signup-form");
     const signupError = document.getElementById("signup-error");
     const signupSuccess = document.getElementById("signup-success");
     const signupSubmitBtn = document.getElementById("signup-submit");
-    const signupPasswordInput = document.getElementById("signup-password");
-    const signupToggleBtn = document.getElementById("signup-password-toggle");
     const showSignupLink = document.getElementById("show-signup-link");
-    const showLoginLink = document.getElementById("show-login-link");
 
-    signupToggleBtn.addEventListener("click", () => {
-      const showing = signupPasswordInput.type === "text";
-      signupPasswordInput.type = showing ? "password" : "text";
-      signupToggleBtn.textContent = showing ? "Show" : "Hide";
+    // --- Forgot password ---
+    const forgotForm = document.getElementById("forgot-form");
+    const forgotError = document.getElementById("forgot-error");
+    const forgotSuccess = document.getElementById("forgot-success");
+    const forgotSubmitBtn = document.getElementById("forgot-submit");
+    const showForgotLink = document.getElementById("show-forgot-link");
+
+    function showOnly(which) {
+      // which: "login" | "signup" | "forgot"
+      form.style.display = which === "login" ? "block" : "none";
+      signupForm.style.display = which === "signup" ? "block" : "none";
+      forgotForm.style.display = which === "forgot" ? "block" : "none";
+      showSignupLink.parentElement.style.display = which === "login" ? "block" : "none";
+      showForgotLink.parentElement.style.display = which === "login" ? "block" : "none";
+      showLoginLink.parentElement.style.display = which === "login" ? "none" : "block";
+    }
+
+    const showLoginLink = document.getElementById("show-login-link");
+    showLoginLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      showOnly("login");
     });
 
     showSignupLink.addEventListener("click", (e) => {
       e.preventDefault();
-      form.style.display = "none";
-      showSignupLink.parentElement.style.display = "none";
-      signupForm.style.display = "block";
-      showLoginLink.style.display = "inline";
+      showOnly("signup");
     });
 
-    showLoginLink.addEventListener("click", (e) => {
+    showForgotLink.addEventListener("click", (e) => {
       e.preventDefault();
-      signupForm.style.display = "none";
-      showLoginLink.style.display = "none";
-      form.style.display = "block";
-      showSignupLink.parentElement.style.display = "block";
+      showOnly("forgot");
     });
 
     signupForm.addEventListener("submit", async (e) => {
@@ -241,8 +257,7 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            username: document.getElementById("signup-username").value,
-            password: signupPasswordInput.value,
+            email: document.getElementById("signup-email").value,
             display_name: document.getElementById("signup-display-name").value,
             nda_acknowledged: document.getElementById("signup-nda-ack").checked,
           }),
@@ -263,6 +278,31 @@
         signupError.style.display = "block";
         signupSubmitBtn.disabled = false;
         signupSubmitBtn.textContent = "Request access";
+      }
+    });
+
+    forgotForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      forgotError.style.display = "none";
+      forgotSuccess.style.display = "none";
+      forgotSubmitBtn.disabled = true;
+      forgotSubmitBtn.textContent = "Sending…";
+      try {
+        await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/auth/forgot-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: document.getElementById("forgot-email").value }),
+        });
+        // Always shown as success -- the endpoint deliberately never
+        // reveals whether the email actually had an account.
+        forgotSuccess.style.display = "block";
+        forgotForm.reset();
+      } catch (err) {
+        forgotError.textContent = "Something went wrong. Please try again.";
+        forgotError.style.display = "block";
+      } finally {
+        forgotSubmitBtn.disabled = false;
+        forgotSubmitBtn.textContent = "Send reset link";
       }
     });
   </script>

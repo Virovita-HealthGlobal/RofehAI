@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RofehAI — Privacy Policy</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<style>
+  :root {
+    --bg: #0A1020; --surface: #121A2E; --border: #263257;
+    --text-1: #E8ECF6; --text-2: #8C9AC2; --text-3: #5C6890; --accent: #4C8DFF;
+    --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text-1); font-family: var(--font-sans); line-height: 1.7; margin: 0; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 60px 28px 100px; }
+  a { color: var(--accent); }
+  h1 { font-size: 30px; margin-bottom: 6px; }
+  h2 { font-size: 18px; margin-top: 40px; margin-bottom: 10px; }
+  p, li { color: var(--text-2); font-size: 14.5px; }
+  .meta { color: var(--text-3); font-size: 13px; margin-bottom: 30px; }
+  .notice {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 18px; font-size: 13px; color: var(--text-2); margin-bottom: 40px;
+  }
+  .back { display: inline-block; margin-bottom: 28px; font-size: 13px; color: var(--text-2); text-decoration: none; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="index.html">← Back to RofehAI</a>
+    <h1>Privacy Policy</h1>
+    <div class="meta">Last updated: September 2026</div>
+
+    <div class="notice">
+      This is a draft policy for a concept-stage reference implementation, written to accurately describe what this site actually does. It has not been reviewed by an attorney and should not be relied on as legal advice or a final compliance document before any real commercial launch.
+    </div>
+
+    <p>This policy covers rofehai.com and app.rofehai.com (together, "RofehAI"), operated by ViroVita HealthGlobal.</p>
+
+    <h2>What we collect</h2>
+    <ul>
+      <li><strong>Account information:</strong> your email address and display name, provided when you request access.</li>
+      <li><strong>Access records:</strong> the timestamp you acknowledged our NDA notice, whether a login attempt succeeded, and the IP address and browser user-agent string associated with each attempt.</li>
+      <li><strong>Session data:</strong> a randomly generated session token stored in your browser's sessionStorage, which identifies you to the API while signed in. It is cleared when you sign out or close your browser tab.</li>
+      <li><strong>Contact form submissions:</strong> whatever name, email, and message you choose to submit.</li>
+    </ul>
+
+    <h2>What we don't collect</h2>
+    <p>We never store your password in plain text — only a one-way cryptographic hash. We do not use advertising trackers, third-party analytics pixels, or cross-site cookies. The dashboard itself runs on synthetic, fabricated demonstration data — no real patient or crew health information is processed by this system.</p>
+
+    <h2>How we use it</h2>
+    <p>Solely to operate the demo: creating and authenticating your account, reviewing and approving access requests, maintaining a security audit trail, and responding to messages you send us. We do not sell your data or share it with advertisers.</p>
+
+    <h2>Third parties</h2>
+    <p>We use <a href="https://resend.com" target="_blank" rel="noopener">Resend</a> to deliver transactional emails (access notifications, password-setup links). Resend processes the email address and message content necessary to deliver that email, under their own privacy policy.</p>
+
+    <h2>Retention</h2>
+    <p>Account and access-log records are retained for as long as your account exists, or as needed for security review. You can request deletion of your account and associated data by contacting us (see below).</p>
+
+    <h2>Your rights</h2>
+    <p>You can request a copy of the data we hold about you, ask us to correct it, or ask us to delete your account, by using the contact form on this site.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy: use the <a href="contact.html">contact form</a>, or reach the RofehAI team via the request-access flow.</p>
+  </div>
+</body>
+</html>

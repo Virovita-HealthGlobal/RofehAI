@@ -29,7 +29,11 @@
       </div>
       <div class="topbar-mission">
         <div class="mission-name" id="mission-name">—</div>
-        <div class="mission-day">MISSION DAY <span id="mission-day-value">—</span></div>
+        <div class="mission-day">
+          MISSION DAY
+          <input type="range" id="mission-day-slider" min="30" max="210" value="210" step="1" style="width:110px; vertical-align:middle; margin:0 6px;" />
+          <span id="mission-day-value">—</span>
+        </div>
       </div>
       <div class="topbar-status" id="system-status">
         <a href="gate.html" style="color:var(--text-2); text-decoration:none; margin-right:16px; border-bottom:1px dotted var(--text-3);">About / how to use</a>

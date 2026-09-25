@@ -1,5 +1,6 @@
 (() => {
   let missionLengthDays = 210;
+  let viewDay = null; // null = "current" (full mission length); set by the mission-day slider
   let activeCrewId = null;
   let chart = null;
   let activeDomains = [];      // [{id, display_name, status}] where status === "active"
@@ -34,6 +35,24 @@
     missionLengthDays = meta.mission_length_days;
     missionNameEl.textContent = meta.name;
     missionDayEl.textContent = missionLengthDays;
+
+    const daySlider = document.getElementById("mission-day-slider");
+    daySlider.max = missionLengthDays;
+    daySlider.value = missionLengthDays;
+    daySlider.addEventListener("input", () => {
+      // Live label update while dragging -- cheap, no fetch yet.
+      missionDayEl.textContent = daySlider.value;
+    });
+    daySlider.addEventListener("change", () => {
+      // Only re-fetch once the person releases the slider, not on every
+      // intermediate tick -- avoids flooding the API while dragging.
+      const day = parseInt(daySlider.value, 10);
+      viewDay = day === missionLengthDays ? null : day; // null = back to "current" (full mission)
+      if (activeCrewId && !viewingAlerts) {
+        const crewName = document.querySelector(`.roster-item[data-crew-id="${activeCrewId}"] .roster-item-name`)?.textContent || "";
+        selectCrew(activeCrewId, crewName);
+      }
+    });
 
     activeDomains = domains.filter((d) => d.status === "active");
     placeholderDomains = domains.filter((d) => d.status !== "active");
@@ -80,10 +99,11 @@
 
     detailPanel.innerHTML = `<div class="empty-state">Loading ${name}&rsquo;s trajectory&hellip;</div>`;
 
+    const dayToView = viewDay || missionLengthDays;
     const [obs, ...rest] = await Promise.all([
-      RofehAPI.observations(crewId, missionLengthDays),
-      ...activeDomains.map((d) => RofehAPI.risk(crewId, d.id, missionLengthDays)),
-      ...activeDomains.map((d) => RofehAPI.countermeasure(crewId, d.id, missionLengthDays)),
+      RofehAPI.observations(crewId, dayToView),
+      ...activeDomains.map((d) => RofehAPI.risk(crewId, d.id, dayToView)),
+      ...activeDomains.map((d) => RofehAPI.countermeasure(crewId, d.id, dayToView)),
     ]);
     const risks = rest.slice(0, activeDomains.length);
     const countermeasures = rest.slice(activeDomains.length);

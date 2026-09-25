@@ -118,6 +118,32 @@
   .traj-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
+  /* Traction */
+  section.traction { padding: 46px 0; border-top: 1px solid var(--border); }
+  .traction .label {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-3);
+    margin-bottom: 20px;
+  }
+  .badge-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
+  .badge-card {
+    background: #FFFFFF;
+    border-radius: 8px;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    height: 48px;
+  }
+  .badge-card img { height: 100%; width: auto; display: block; }
+  .badge-card.text-badge {
+    color: #16191F;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+
   /* Problem */
   section.problem { padding: 54px 0; border-top: 1px solid var(--border); }
   .problem h2 {
@@ -268,6 +294,15 @@
       </div>
     </section>
 
+    <section class="traction">
+      <div class="label">RECOGNIZED BY</div>
+      <div class="badge-row">
+        <div class="badge-card"><img src="assets/badges/nvidia-inception.svg" alt="NVIDIA Inception Program" /></div>
+        <div class="badge-card"><img src="assets/badges/cai-logo.png" alt="The Center for Advancing Innovation" /></div>
+        <div class="badge-card text-badge">AWS Startups</div>
+      </div>
+    </section>
+
     <section class="problem">
       <h2>Earth is minutes away. Sometimes it isn't reachable at all.</h2>
       <p>A message to and from a Mars-class mission can take the better part of an hour round-trip — and a solar event or an antenna misalignment can cut that link off completely. Long-duration spaceflight carries real risks, like SANS and immune dysregulation, that today's monitoring checks against a population average rather than how a specific person has actually been trending. By the time Earth learns something is wrong, the crew has usually already had to notice it, work out what it means, and describe it themselves.</p>
@@ -321,7 +356,12 @@
 
     <footer>
       <div>© 2026 RofehAI. A ViroVita HealthGlobal product.</div>
-      <div><a href="https://app.rofehai.com/gate.html">Request demo access</a></div>
+      <div style="display:flex; gap:20px; align-items:center;">
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a href="contact.html">Contact</a>
+        <a href="https://app.rofehai.com/gate.html">Request demo access</a>
+      </div>
     </footer>
   </div>
 </body>

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import os
+import secrets
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 
 from app.core import agent as agent_core
 from app.core import countermeasures as cm
 from app.core import db
 from app.core import monitoring
+from app.core import notify
 from app.core import user_auth
 from app.core.digital_twin import registry
 from app.core.domains import DOMAIN_REGISTRY, active_domains, all_domains
@@ -62,20 +65,30 @@ def gate_check(payload: dict, request: Request):
 
 @router.get("/gate/audit-log")
 def gate_audit_log(limit: int = 100):
-    """Real observability into gate access attempts -- who tried, when,
-    whether they acknowledged the NDA, whether the code was correct.
-    Never returns the submitted passcode itself."""
+    """Real observability into gate access attempts -- WHO tried (both
+    the attempted username and, on success, the real display name), when,
+    whether they acknowledged the NDA, whether the login succeeded.
+    Never returns the submitted password itself."""
     attempts = db.recent_gate_attempts(limit)
-    return [
-        {
-            "nda_acknowledged": a.nda_acknowledged,
-            "success": a.success,
-            "ip_address": a.ip_address,
-            "user_agent": a.user_agent,
-            "created_at": a.created_at.isoformat(),
-        }
-        for a in attempts
-    ]
+    result = []
+    for a in attempts:
+        display_name = None
+        if a.user_id:
+            user = db.get_user_by_id(a.user_id)
+            display_name = user.display_name if user else None
+        result.append(
+            {
+                "username_attempted": a.username_attempted,
+                "display_name": display_name,  # None for a failed attempt (no user was ever resolved) or an anonymous/unauthenticated hit
+                "user_id": a.user_id,
+                "nda_acknowledged": a.nda_acknowledged,
+                "success": a.success,
+                "ip_address": a.ip_address,
+                "user_agent": a.user_agent,
+                "created_at": a.created_at.isoformat(),
+            }
+        )
+    return result
 
 
 # --- Real per-user authentication -----------------------------------------
@@ -141,6 +154,65 @@ def list_user_accounts(x_api_key: str | None = Header(default=None)):
     return [{"id": u.id, "username": u.username, "display_name": u.display_name, "is_active": u.is_active} for u in users]
 
 
+@router.post("/auth/signup")
+def signup(payload: dict):
+    """Self-service signup -- the account is created but starts INACTIVE
+    and cannot log in until an admin clicks Approve in the notification
+    email. The NDA checkbox is required here (not optional, unlike the
+    login endpoint's flag, which just logs it) -- signup is exactly the
+    moment that acknowledgment matters."""
+    username = (payload or {}).get("username", "").strip()
+    password = (payload or {}).get("password", "")
+    display_name = (payload or {}).get("display_name", "").strip() or username
+    nda_acknowledged = bool((payload or {}).get("nda_acknowledged", False))
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="username and password are required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if not nda_acknowledged:
+        raise HTTPException(status_code=400, detail="NDA acknowledgment is required to request access")
+    if db.get_user_by_username(username):
+        raise HTTPException(status_code=409, detail=f"username '{username}' already exists")
+
+    token = secrets.token_urlsafe(32)
+    user = db.create_pending_signup(username, user_auth.hash_password(password), display_name, token)
+
+    base_url = os.environ.get("ROFEHAI_PUBLIC_API_BASE", "").rstrip("/")
+    approve_url = f"{base_url}/api/auth/approve/{token}"
+    reject_url = f"{base_url}/api/auth/reject/{token}"
+
+    try:
+        notify.send_signup_approval_email(username, display_name, user.nda_acknowledged_at, approve_url, reject_url)
+    except notify.EmailError as e:
+        # The account still exists as pending -- an admin can approve it
+        # manually via POST /auth/users' sibling admin tooling later even
+        # if the notification email itself failed to send. Surface the
+        # failure rather than silently pretending it worked.
+        raise HTTPException(status_code=502, detail=f"Signup recorded, but the admin notification email failed to send: {e}")
+
+    return {"ok": True, "message": "Signup received. An admin will review your request."}
+
+
+@router.get("/auth/approve/{token}", response_class=HTMLResponse)
+def approve_signup(token: str):
+    user = db.get_user_by_approval_token(token)
+    if user is None:
+        return HTMLResponse("<h2>This approval link is invalid or has already been used.</h2>", status_code=404)
+    db.approve_pending_user(user.id)
+    return HTMLResponse(f"<h2>Approved. {user.username} can now log in to RofehAI.</h2>")
+
+
+@router.get("/auth/reject/{token}", response_class=HTMLResponse)
+def reject_signup(token: str):
+    user = db.get_user_by_approval_token(token)
+    if user is None:
+        return HTMLResponse("<h2>This link is invalid or has already been used.</h2>", status_code=404)
+    username = user.username
+    db.reject_pending_user(user.id)
+    return HTMLResponse(f"<h2>Rejected. The request for '{username}' has been removed.</h2>")
+
+
 @router.post("/auth/login")
 def login(payload: dict, request: Request):
     username = (payload or {}).get("username", "").strip()
@@ -152,13 +224,19 @@ def login(payload: dict, request: Request):
     user_agent = request.headers.get("user-agent")
 
     user = db.get_user_by_username(username)
-    success = bool(user and user.is_active and user_auth.verify_password(password, user.password_hash))
+    password_correct = bool(user and user_auth.verify_password(password, user.password_hash))
+    success = bool(password_correct and user.is_active)
 
     db.log_gate_attempt(
         nda_acknowledged=nda_acknowledged, success=success, ip_address=client_ip, user_agent=user_agent,
         username_attempted=username, user_id=user.id if (success and user) else None,
     )
 
+    if password_correct and user and not user.is_active:
+        # Distinct from "wrong credentials" -- only shown when the
+        # password was genuinely correct, so it doesn't leak account
+        # existence to someone just guessing usernames.
+        raise HTTPException(status_code=403, detail="Your account is pending admin approval")
     if not success:
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RofehAI — Catch spaceflight blindness before it happens</title>
+<link rel="icon" type="image/png" href="assets/favicon.png" />
+<style>
+  :root {
+    --bg: #0A1020;
+    --surface: #121A2E;
+    --surface-2: #1A2440;
+    --border: #263257;
+    --text-1: #E8ECF6;
+    --text-2: #8C9AC2;
+    --text-3: #5C6890;
+    --accent: #4C8DFF;
+    --nominal: #2FBF8F;
+    --elevated: #E0A23D;
+    --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text-1);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  img { max-width: 100%; display: block; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
+
+  header.top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px 0;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand img { width: 30px; height: 30px; }
+  .brand span { font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+  .top-actions a {
+    text-decoration: none;
+    font-size: 14px;
+    color: var(--text-2);
+    margin-left: 26px;
+  }
+  .top-actions a.cta-small {
+    color: var(--text-1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 16px;
+  }
+
+  /* Hero */
+  .hero {
+    display: flex;
+    gap: 56px;
+    align-items: center;
+    padding: 56px 0 72px;
+  }
+  .hero .hero-text { flex: 1.05; }
+  .hero .traj-card { flex: 0.95; }
+  .hero h1 {
+    font-size: 46px;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+    font-weight: 650;
+    max-width: 620px;
+  }
+  .hero .sub {
+    margin-top: 20px;
+    font-size: 17px;
+    color: var(--text-2);
+    max-width: 520px;
+    line-height: 1.6;
+  }
+  .hero .ctas { margin-top: 32px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 13px 22px;
+    border-radius: 7px;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .btn-primary { background: var(--accent); color: #0A1020; }
+  .btn-secondary { background: transparent; color: var(--text-1); border-color: var(--border); }
+  .hero .fine-print {
+    margin-top: 18px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  /* Trajectory visual */
+  .traj-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 26px 26px 20px;
+  }
+  .traj-card .label {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-3);
+    margin-bottom: 14px;
+  }
+  .traj-card svg { width: 100%; height: auto; display: block; }
+  .traj-legend { display: flex; gap: 20px; margin-top: 14px; font-size: 12px; color: var(--text-2); }
+  .traj-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* Sections */
+  section.capabilities { padding: 60px 0 70px; border-top: 1px solid var(--border); }
+  .capabilities h2 {
+    font-size: 26px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    max-width: 560px;
+    margin-bottom: 44px;
+  }
+  .capability-flow {
+    display: flex;
+    gap: 40px;
+    position: relative;
+  }
+  .capability-flow > .cap { flex: 1; }
+  .capability-flow::before {
+    content: "";
+    position: absolute;
+    top: 22px;
+    left: 8%;
+    right: 8%;
+    height: 1px;
+    background: var(--border);
+  }
+  .cap {
+    position: relative;
+    padding-top: 56px;
+  }
+  .cap .marker {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .cap h3 { font-size: 17px; font-weight: 600; margin-bottom: 10px; padding-right: 20px; }
+  .cap p { font-size: 14.5px; color: var(--text-2); line-height: 1.65; padding-right: 20px; }
+
+  /* Who this is for */
+  section.audience { padding: 56px 0; border-top: 1px solid var(--border); }
+  .audience-grid {
+    display: flex;
+    gap: 48px;
+  }
+  .audience-grid > div { flex: 1; }
+  .audience h2 { font-size: 22px; font-weight: 650; margin-bottom: 16px; }
+  .audience ul { list-style: none; }
+  .audience li {
+    font-size: 14.5px;
+    color: var(--text-2);
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .audience li:last-child { border-bottom: none; }
+
+  /* Disclaimer */
+  section.honest { padding: 40px 0; border-top: 1px solid var(--border); }
+  .honest p { font-size: 13.5px; color: var(--text-3); line-height: 1.7; max-width: 760px; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 26px 0 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12.5px;
+    color: var(--text-3);
+  }
+  footer a { color: var(--text-2); text-decoration: none; }
+
+  @media (max-width: 860px) {
+    .hero { flex-direction: column; padding-top: 30px; }
+    .hero h1 { font-size: 34px; }
+    .capability-flow { flex-direction: column; gap: 34px; }
+    .capability-flow::before { display: none; }
+    .audience-grid { flex-direction: column; gap: 32px; }
+    footer { flex-direction: column; gap: 10px; text-align: center; }
+    .top-actions { display: flex; align-items: center; gap: 12px; }
+    .top-actions a { margin-left: 0; white-space: nowrap; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <img src="assets/icon.png" alt="RofehAI" />
+        <span>RofehAI</span>
+      </div>
+      <div class="top-actions">
+        <a href="https://app.rofehai.com/gate.html">Sign in</a>
+        <a href="https://app.rofehai.com/gate.html" class="cta-small">Request access</a>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="hero-text">
+        <h1>Catch spaceflight blindness before it happens.</h1>
+        <p class="sub">RofehAI learns each astronaut's body over the course of a mission — not a population average — and gives a flight surgeon the moment they need to act, before Earth is even reachable.</p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="https://app.rofehai.com/gate.html">Request demo access</a>
+          <a class="btn btn-secondary" href="#capabilities">See how it works</a>
+        </div>
+        <div class="fine-print">Concept-stage reference implementation · synthetic demo data · not a medical device</div>
+      </div>
+
+      <div class="traj-card">
+        <div class="label">SANS RISK TRAJECTORY — CREW-01, MISSION DAY 214</div>
+        <svg viewBox="0 0 460 220" xmlns="http://www.w3.org/2000/svg">
+          <line x1="0" y1="55" x2="460" y2="55" stroke="#263257" stroke-width="1" stroke-dasharray="3 4" />
+          <line x1="0" y1="150" x2="460" y2="150" stroke="#263257" stroke-width="1" stroke-dasharray="3 4" />
+          <path d="M0,168 C60,164 100,150 140,140 C190,128 220,112 260,88 C300,64 330,50 370,40 C400,32 430,28 460,26"
+                fill="none" stroke="#4C8DFF" stroke-width="2.5" />
+          <circle cx="370" cy="40" r="5" fill="#0A1020" stroke="#E0A23D" stroke-width="2.5" />
+          <line x1="370" y1="40" x2="370" y2="0" stroke="#E0A23D" stroke-width="1" stroke-dasharray="2 3" />
+          <text x="290" y="16" font-family="IBM Plex Mono, monospace" font-size="10" fill="#E0A23D">86% risk, rising</text>
+          <circle cx="460" cy="26" r="4" fill="#4C8DFF" />
+        </svg>
+        <div class="traj-legend">
+          <span><span class="dot" style="background:#4C8DFF"></span> Personal baseline</span>
+          <span><span class="dot" style="background:#E0A23D"></span> Significant change detected</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="capabilities" id="capabilities">
+      <h2>One platform, from continuous monitoring to the moment a clinician needs to see it.</h2>
+      <div class="capability-flow">
+        <div class="cap">
+          <div class="marker">1</div>
+          <h3>Personalized trajectory monitoring</h3>
+          <p>Every crew member gets their own baseline, not a population norm. SANS and immune-dysregulation risk are scored against how that person specifically has been trending — with a confidence figure, never a false-precision number when the data isn't there yet.</p>
+        </div>
+        <div class="cap">
+          <div class="marker">2</div>
+          <h3>Ask the briefing agent</h3>
+          <p>A flight surgeon can ask a plain question — about one crew member, or the whole roster at once — and get an answer assembled entirely from real, fetched data. It remembers the conversation, and it never writes clinical text of its own.</p>
+        </div>
+        <div class="cap">
+          <div class="marker">3</div>
+          <h3>Near-real-time clinical relay</h3>
+          <p>When something changes significantly, RofehAI packages the evidence immediately and queues it for transmission the moment a link exists — reducing the delay that's actually within its control, while a human always makes the call.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="audience">
+      <div class="audience-grid">
+        <div>
+          <h2>Who this is for</h2>
+          <ul>
+            <li>Investors and reviewers evaluating the concept and technical approach</li>
+            <li>Potential institutional partners (e.g. TRISH) assessing feasibility</li>
+            <li>Collaborators and advisors reviewing the architecture</li>
+          </ul>
+        </div>
+        <div>
+          <h2>What this is not</h2>
+          <ul>
+            <li>Not a clinically validated product — runs on synthetic demo data only</li>
+            <li>Not a medical device, not for real clinical or diagnostic use</li>
+            <li>Not a finished commercial product — concept / reference stage</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="honest">
+      <p>RofehAI is a working reference implementation of a proposed architecture for long-duration spaceflight health monitoring. It is not a medical device, is not FDA-cleared, and has not been clinically validated. Access is by request and reviewed individually — request a demo account above to explore the live system.</p>
+    </section>
+
+    <footer>
+      <div>© 2026 RofehAI. Built for the GenAI.works Open Agent Hackathon.</div>
+      <div><a href="https://app.rofehai.com/gate.html">Request demo access</a></div>
+    </footer>
+  </div>
+</body>
+</html>

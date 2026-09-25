@@ -185,6 +185,30 @@ SMS, radio) beyond the API surfacing "transmitted" status, and the
 real clinical sign-off, not a claim that these protocols have been
 validated by an actual flight surgeon.
 
+## Marketing landing page vs. the dashboard
+
+`rofehai.com` and `app.rofehai.com` now serve genuinely different content
+from the same frontend container, via host-based routing in
+`frontend/nginx.conf`:
+
+- **`rofehai.com` / `www.rofehai.com`** → `frontend/marketing/index.html`,
+  a standalone landing page (own hero, own copy, own trajectory-chart
+  SVG) with "Request demo access" and "Sign in" both linking to
+  `app.rofehai.com`. Self-contained — its own copy of the logo assets,
+  not sharing paths with the dashboard, since nginx scopes its root
+  separately.
+- **`app.rofehai.com`, and any other/unrecognized hostname** → the
+  existing dashboard (gate/login → crew roster, unchanged).
+
+This was verified directly, not just assumed from reading the config: a
+real nginx instance was started locally with the exact file layout
+Docker builds, and `curl` with different `Host` headers confirmed each
+hostname actually returns its own distinct page. The landing page's
+hero layout uses flexbox rather than CSS Grid specifically because that
+choice was verified against a real (if old-engine) renderer during
+design review — Grid would very likely still work in real browsers, but
+flexbox removed the ambiguity entirely rather than trusting it blind.
+
 ## What the dashboard shows
 
 - **Crew roster** with a live risk-status indicator per person
@@ -308,7 +332,7 @@ Added on top of the initial reference implementation, still well short of
   signed-out token no longer resolves to a user at all, not just that
   the browser forgot it.
 
-  **No public signup.** Accounts are created by an admin via
+  **Two ways to get an account.** An admin can create one directly via
   `POST /api/auth/users`, protected by `ROFEHAI_ADMIN_KEY` — a
   **separate** env var from `ROFEHAI_API_KEY` on purpose: reusing the
   same variable would mean setting a key just to create accounts also
@@ -317,6 +341,25 @@ Added on top of the initial reference implementation, still well short of
   it. This exact coupling bug was caught by running the full login flow
   live before shipping it, not assumed away.
 
+  **Self-service signup, gated by real admin approval** (`gate.html`'s
+  "Request access" link, or `POST /api/auth/signup`): the account is
+  created immediately but starts **inactive** — it cannot log in until
+  an admin clicks Approve. The admin is notified by email (via Resend)
+  containing the requester's username, display name, and NDA-
+  acknowledgment timestamp — **the password is never included in that
+  email**, hashed or otherwise; a test specifically confirms this.
+  Approve/Reject are one-click links straight from the email (each a
+  single-use token — clicking Approve twice does nothing the second
+  time, confirmed by a test). If Resend isn't configured or the send
+  fails, the pending account still exists (nothing is silently lost)
+  and the requester sees a clear error rather than a false "success."
+  A pending account that tries to log in with the *correct* password
+  gets a distinct "pending admin approval" message rather than the
+  generic wrong-credentials error — but a genuinely wrong password on a
+  pending account still gets the generic message, so guessing usernames
+  can't be used to detect which accounts exist and are just waiting on
+  approval.
+
   **Real attribution, not spoofable**: countermeasure logs and alert
   acknowledgments use the authenticated user's identity automatically
   (sent via `Authorization: Bearer <token>` on every request) — a
@@ -324,18 +367,25 @@ Added on top of the initial reference implementation, still well short of
   request body, confirmed by a test that attempts exactly that spoof.
 
   Every login attempt — NDA acknowledged or not, credentials correct or
-  not — is logged server-side (`db.GateAccessLog`, tied to the attempted
-  username and, on success, the real user id). The password itself is
-  never stored in plaintext or logged anywhere.
+  not — is logged server-side and visible via `GET /api/gate/audit-log`:
+  the attempted username, and on success the real display name and user
+  id, so you can actually answer "who checked the NDA box and when," not
+  just "how many attempts happened." (A real gap existed here briefly:
+  the database recorded who attempted, but the endpoint didn't return
+  it — fixed, with a test confirming a successful attempt shows the real
+  name and a failed one correctly shows nothing, never a guess.) The
+  password itself is never stored in plaintext or logged anywhere.
 
   **What's still honestly not built**: no password reset flow (but see
   self-service change below — a logged-in user CAN update their own
   password), no roles/permissions (every account can see everything), no
-  rate limiting on login attempts specifically (the agent's separate rate
-  limit doesn't cover this), no self-service signup (by design, for
-  now). The old shared-passcode endpoint (`POST /api/gate/check`) still
-  exists in the code for backward compatibility but is no longer used by
-  the frontend.
+  rate limiting on login OR signup attempts specifically (the agent's
+  separate rate limit doesn't cover this — someone could spam signup
+  requests and flood the admin's inbox), no expiry on pending signup
+  requests (an old, never-approved request sits forever unless rejected).
+  The old shared-passcode endpoint (`POST /api/gate/check`) still exists
+  in the code for backward compatibility but is no longer used by the
+  frontend.
 
   **Self-service password change**: once logged in, a "Change password"
   link in the dashboard lets a user set a new password themselves —

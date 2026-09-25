@@ -101,6 +101,34 @@ def test_gate_check_records_nda_not_acknowledged():
     assert r.json()[0]["nda_acknowledged"] is False
 
 
+def test_gate_audit_log_identifies_who_attempted(monkeypatch):
+    """Regression test for a real gap: the audit log stored who
+    attempted (username + user_id) but the endpoint never returned
+    those fields -- it was impossible to tell WHO checked the NDA box,
+    only that someone did. Both the attempted username and, on success,
+    the real display name must be visible."""
+    from tests.test_user_auth import _make_user
+
+    _make_user(monkeypatch, username="audit_who_user", password="audit-who-pw-1", display_name="Real Audit Person")
+    client.post(
+        "/api/auth/login",
+        json={"username": "audit_who_user", "password": "audit-who-pw-1", "nda_acknowledged": True},
+    )
+    client.post("/api/auth/login", json={"username": "audit_who_user", "password": "wrong-one"})
+
+    entries = client.get("/api/gate/audit-log", params={"limit": 10}).json()
+    matching = [e for e in entries if e["username_attempted"] == "audit_who_user"]
+    assert len(matching) == 2
+
+    successful = [e for e in matching if e["success"] is True][0]
+    failed = [e for e in matching if e["success"] is False][0]
+
+    assert successful["display_name"] == "Real Audit Person"
+    assert successful["user_id"] is not None
+    assert failed["display_name"] is None  # never resolved to a real user -- correctly absent, not guessed
+    assert failed["user_id"] is None
+
+
 def test_gate_check_custom_code(monkeypatch):
     monkeypatch.setenv("ROFEHAI_GATE_CODE", "custom-secret")
     try:

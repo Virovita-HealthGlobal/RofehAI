@@ -44,5 +44,7 @@ window.RofehAPI = (() => {
     logout: () => post("/auth/logout", {}),
     changePassword: (currentPassword, newPassword) =>
       post("/auth/change-password", { current_password: currentPassword, new_password: newPassword }),
+    signup: (username, password, displayName, ndaAcknowledged) =>
+      post("/auth/signup", { username, password, display_name: displayName, nda_acknowledged: ndaAcknowledged }),
   };
 })();

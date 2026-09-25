@@ -132,11 +132,14 @@ class AlertRecord(SQLModel, table=True):
 
 
 class User(SQLModel, table=True):
-    """A real, individually-attributable account. No public signup --
-    accounts are created by an admin (see POST /api/auth/users, protected
-    by ROFEHAI_API_KEY) for invited reviewers/collaborators, matching the
-    'contact the RofehAI team' language already in the gate. Passwords
-    are bcrypt-hashed; the plaintext is never stored or logged anywhere."""
+    """A real, individually-attributable account. Two ways to be created:
+    (1) directly by an admin (POST /api/auth/users, protected by
+    ROFEHAI_ADMIN_KEY) -- these start active immediately; (2) self-service
+    signup (POST /api/auth/signup) -- these start INACTIVE and can't log
+    in until an admin approves via the emailed link. Passwords are
+    bcrypt-hashed; the plaintext is never stored, emailed, or logged
+    anywhere -- an approval notification includes the username/display
+    name/NDA-acknowledgment timestamp, never the password."""
 
     id: int | None = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
@@ -144,6 +147,8 @@ class User(SQLModel, table=True):
     display_name: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_active: bool = Field(default=True)  # allows revoking access without deleting the audit trail
+    nda_acknowledged_at: datetime | None = None  # set at signup time, shown to the approving admin
+    approval_token: str | None = Field(default=None, index=True)  # single-use; cleared once approved/rejected
 
 
 class UserSession(SQLModel, table=True):
@@ -378,6 +383,50 @@ def create_user(username: str, password_hash: str, display_name: str) -> User:
         session.commit()
         session.refresh(user)
         return user
+
+
+def create_pending_signup(username: str, password_hash: str, display_name: str, approval_token: str) -> User:
+    """Self-service signup -- starts INACTIVE, can't log in until an
+    admin approves via the token embedded in the notification email."""
+    with Session(engine) as session:
+        user = User(
+            username=username, password_hash=password_hash, display_name=display_name,
+            is_active=False, nda_acknowledged_at=datetime.now(UTC), approval_token=approval_token,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+def get_user_by_approval_token(token: str) -> User | None:
+    with Session(engine) as session:
+        stmt = select(User).where(User.approval_token == token)
+        return session.exec(stmt).first()
+
+
+def approve_pending_user(user_id: int) -> User | None:
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user is None:
+            return None
+        user.is_active = True
+        user.approval_token = None  # single-use: token can never be replayed after this
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+def reject_pending_user(user_id: int) -> None:
+    """Rejection deletes the account entirely -- a rejected signup
+    shouldn't leave a dormant row that could confuse a later duplicate
+    signup attempt with the same username."""
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user:
+            session.delete(user)
+            session.commit()
 
 
 def get_user_by_username(username: str) -> User | None:

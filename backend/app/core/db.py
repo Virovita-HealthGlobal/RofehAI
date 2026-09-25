@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
-DATABASE_URL = os.environ.get("ROFEHAI_DATABASE_URL") or "sqlite:///./rofehai.db"
+DATABASE_URL = os.environ.get("ROFEHAI_DATABASE_URL") or "sqlite:///./data/rofehai.db"
 
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=_connect_args)

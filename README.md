@@ -261,6 +261,21 @@ Added on top of the initial reference implementation, still well short of
   independent `SELECT` confirming the rows), not just assumed to work
   because the ORM supports it in theory.
 
+  **Real bug, found and fixed**: for most of one day's development, the
+  SQLite database had no Docker volume at all — it lived inside the
+  backend container's own filesystem, so every `docker compose build`
+  silently wiped it completely (every account, alert, and conversation
+  created that day was lost on the next rebuild, with no error or
+  warning). Fixed by moving the database into its own `data/`
+  subdirectory (isolated from application code) and mounting a real
+  named Docker volume there — confirmed by directly simulating a
+  rebuild (create data in one process, start a completely fresh process
+  against the same volume, confirm the data is still there) rather than
+  just trusting the YAML looked right. **If you're running an older
+  deployment from before this fix, your database was never actually
+  persisted** — back up anything you need before pulling this update,
+  since the schema/location changed.
+
 - **Chart.js is vendored locally** (`frontend/js/vendor/chart.umd.js`)
   rather than loaded from a CDN — an early deployment had the dashboard's
   trend chart silently fail to render for some visitors because their

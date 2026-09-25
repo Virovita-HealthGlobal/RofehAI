@@ -3,6 +3,8 @@ services:
     build: ./backend
     ports:
       - "8900:8000"
+    volumes:
+      - rofehai_db_data:/app/data
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ROFEHAI_AGENT_DAILY_LIMIT=${ROFEHAI_AGENT_DAILY_LIMIT:-}
@@ -17,3 +19,10 @@ services:
       - "8901:80"
     depends_on:
       - backend
+
+volumes:
+  rofehai_db_data:
+    # Persists the SQLite database (accounts, alerts, conversations, etc.)
+    # across container rebuilds. Without this, every `docker compose
+    # build` wipes the database completely -- a real bug that existed
+    # all day before this fix, silently resetting every account created.

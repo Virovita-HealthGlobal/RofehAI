@@ -41,6 +41,7 @@ window.RofehAPI = (() => {
     getCommsLink: () => get("/comms/link"),
     setCommsLink: (available) => post("/comms/link", { available }),
     getLatencyMetrics: () => get("/alerts/metrics/latency"),
+    getAgentUsage: (limit) => get(`/agent/usage${limit ? `?limit=${limit}` : ""}`),
     logout: () => post("/auth/logout", {}),
     changePassword: (currentPassword, newPassword) =>
       post("/auth/change-password", { current_password: currentPassword, new_password: newPassword }),

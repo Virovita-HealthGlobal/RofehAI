@@ -66,8 +66,13 @@
         <span class="status-dot status-dot--nominal" data-role="dot"></span>
         <span class="roster-item-name">${member.name}</span>
         <span class="roster-item-day">${member.id}</span>
+        <button type="button" data-role="rename" title="Rename crew member (admin)" style="margin-left:auto; background:none; border:none; color:var(--text-3); cursor:pointer; font-size:12px; padding:2px 6px; opacity:0.55;">&#9998;</button>
       `;
       li.addEventListener("click", () => selectCrew(member.id, member.name));
+      li.querySelector('[data-role="rename"]').addEventListener("click", (e) => {
+        e.stopPropagation();
+        renameCrewMember(member.id, li.querySelector(".roster-item-name").textContent);
+      });
       rosterList.appendChild(li);
     }
 
@@ -88,6 +93,38 @@
     refreshCommsLinkUI();
     refreshAlertsBadge();
     if (crew.length) selectCrew(crew[0].id, crew[0].name);
+  }
+
+
+  async function renameCrewMember(crewId, currentName) {
+    const newName = window.prompt(`Rename ${currentName} (${crewId}).\n\nLeave blank to reset to the original name.`, currentName);
+    if (newName === null) return; // cancelled
+    const adminKey = window.prompt("Enter admin key to confirm this change:");
+    if (!adminKey) return;
+    try {
+      const trimmed = newName.trim();
+      const res = trimmed === ""
+        ? await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/crew/${crewId}/name`, {
+            method: "DELETE",
+            headers: { "x-api-key": adminKey },
+          })
+        : await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/crew/${crewId}/name`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "x-api-key": adminKey },
+            body: JSON.stringify({ display_name: trimmed }),
+          });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        alert(`Rename failed: ${body.detail || res.status}`);
+        return;
+      }
+      const data = await res.json();
+      const nameEl = document.querySelector(`.roster-item[data-crew-id="${crewId}"] .roster-item-name`);
+      if (nameEl) nameEl.textContent = data.display_name;
+      if (activeCrewId === crewId) selectCrew(crewId, data.display_name);
+    } catch (err) {
+      alert("Rename failed: network error");
+    }
   }
 
   async function selectCrew(crewId, name) {
@@ -505,6 +542,80 @@
       document.querySelectorAll(".roster-item").forEach((el) => el.classList.remove("is-active"));
       renderAlertsView();
     });
+
+    const metricsBtn = document.getElementById("view-metrics-btn");
+    metricsBtn?.addEventListener("click", () => {
+      document.querySelectorAll(".roster-item").forEach((el) => el.classList.remove("is-active"));
+      renderMetricsView();
+    });
+  }
+
+  async function renderMetricsView() {
+    viewingAlerts = false;
+    activeCrewId = null;
+    detailPanel.innerHTML = `<div class="empty-state">Loading metrics&hellip;</div>`;
+
+    const [calls, latency] = await Promise.all([
+      RofehAPI.getAgentUsage(100),
+      RofehAPI.getLatencyMetrics(),
+    ]);
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const callsToday = calls.filter((c) => (c.created_at || "").slice(0, 10) === todayStr);
+
+    function fmtSecs(s) {
+      if (s === null || s === undefined) return "&mdash;";
+      return `${s.toFixed(1)}s`;
+    }
+
+    function callRow(c) {
+      return `
+        <tr>
+          <td style="padding:6px 10px; font-size:12px;">${c.crew_id || "fleet-wide"}</td>
+          <td style="padding:6px 10px; font-size:12px;">${c.question_length}</td>
+          <td style="padding:6px 10px; font-size:12px;">${c.tool_calls_made}</td>
+          <td style="padding:6px 10px; font-size:12px;">${c.used_recall ? "yes" : "no"}</td>
+          <td style="padding:6px 10px; font-size:12px; color:var(--text-3);">${new Date(c.created_at).toLocaleString()}</td>
+        </tr>`;
+    }
+
+    detailPanel.innerHTML = `
+      <div class="detail-heading"><h1>Agent &amp; System Metrics</h1></div>
+
+      <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px;">
+        <div class="risk-card" style="flex:1; min-width:180px;">
+          <div style="font-size:11px; color:var(--text-3); text-transform:uppercase;">Agent calls today</div>
+          <div style="font-size:28px; font-weight:700;">${callsToday.length}</div>
+          <div style="font-size:11px; color:var(--text-3);">Protected by a server-side daily limit (ROFEHAI_AGENT_DAILY_LIMIT)</div>
+        </div>
+        <div class="risk-card" style="flex:1; min-width:180px;">
+          <div style="font-size:11px; color:var(--text-3); text-transform:uppercase;">Total alerts detected</div>
+          <div style="font-size:28px; font-weight:700;">${latency.total_alerts}</div>
+        </div>
+      </div>
+
+      <h3 style="font-size:13px; color:var(--text-2);">Clinical alert relay latency (measured, not simulated)</h3>
+      <div style="margin-bottom:20px; font-size:13px; line-height:1.9;">
+        Detection &rarr; queued: <strong>${fmtSecs(latency.avg_seconds_detection_to_alert_queued)}</strong> avg<br/>
+        Queued &rarr; transmitted (simulated comms latency): <strong>${fmtSecs(latency.avg_seconds_comms_latency_queue_to_transmit)}</strong> avg<br/>
+        Transmitted &rarr; clinician acknowledged: <strong>${fmtSecs(latency.avg_seconds_transmit_to_clinician_ack)}</strong> avg
+      </div>
+
+      <h3 style="font-size:13px; color:var(--text-2);">Recent briefing-agent calls</h3>
+      <div style="font-size:11px; color:var(--text-3); margin-bottom:8px;">Call metadata only &mdash; never conversation content.</div>
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr style="text-align:left; border-bottom:1px solid var(--border);">
+            <th style="padding:6px 10px; font-size:11px; color:var(--text-3);">Crew</th>
+            <th style="padding:6px 10px; font-size:11px; color:var(--text-3);">Question length</th>
+            <th style="padding:6px 10px; font-size:11px; color:var(--text-3);">Tool calls</th>
+            <th style="padding:6px 10px; font-size:11px; color:var(--text-3);">Used memory</th>
+            <th style="padding:6px 10px; font-size:11px; color:var(--text-3);">When</th>
+          </tr>
+        </thead>
+        <tbody>${calls.slice(0, 20).map(callRow).join("")}</tbody>
+      </table>
+    `;
   }
 
   async function renderAlertsView() {

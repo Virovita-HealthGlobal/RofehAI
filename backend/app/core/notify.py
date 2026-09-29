@@ -100,6 +100,26 @@ def _send_email(to_addresses: list[str], subject: str, html_body: str, reply_to:
         raise EmailError(f"SMTP send failed: {e}")
 
 
+def render_branded_page(heading: str, body_html: str = "") -> str:
+    """Shared branded HTML for the plain confirmation pages behind the
+    approve/reject links (opened directly in a browser, not an email
+    client) -- so every RofehAI-branded surface, email or page, looks
+    consistent rather than a bare unstyled <h2>."""
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RofehAI</title></head>
+<body style="margin:0; background:#060911; font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:480px; margin:48px auto; padding:32px 24px; background:#0b1220; border-radius:12px; color:#e6e9f0;">
+    <div style="text-align:center; margin-bottom:20px;">
+      <div style="font-size:20px; font-weight:700; color:#ffffff;">RofehAI</div>
+      <div style="font-size:12px; color:#8891a8; margin-top:2px;">your physician, everywhere</div>
+    </div>
+    <h2 style="font-size:17px; color:#e6e9f0; text-align:center; font-weight:600;">{heading}</h2>
+    {body_html}
+  </div>
+</body></html>"""
+
+
 def send_signup_approval_email(
     email: str, display_name: str, nda_acknowledged_at, approve_url: str, reject_url: str
 ) -> None:
@@ -109,20 +129,26 @@ def send_signup_approval_email(
     recipients = [r.strip() for r in recipients_raw.split(",") if r.strip()]
 
     html_body = f"""
-    <p>A new RofehAI dashboard account is requesting access.</p>
-    <ul>
-      <li><strong>Email:</strong> {email}</li>
-      <li><strong>Display name:</strong> {display_name}</li>
-      <li><strong>NDA acknowledged at:</strong> {nda_acknowledged_at}</li>
-    </ul>
-    <p>
-      <a href="{approve_url}" style="background:#2563eb;color:#fff;padding:10px 18px;
-        border-radius:6px;text-decoration:none;margin-right:10px;">Approve</a>
-      <a href="{reject_url}" style="background:#dc2626;color:#fff;padding:10px 18px;
-        border-radius:6px;text-decoration:none;">Reject</a>
-    </p>
-    <p style="color:#888;font-size:12px;">This request will not be able to log in until approved.
-    No password was included in this email, by design.</p>
+    <div style="font-family:Arial,Helvetica,sans-serif; max-width:480px; margin:0 auto; padding:32px 24px; background:#0b1220; border-radius:12px; color:#e6e9f0;">
+      <div style="text-align:center; margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:700; color:#ffffff; letter-spacing:0.5px;">RofehAI</div>
+        <div style="font-size:12px; color:#8891a8; margin-top:2px;">your physician, everywhere</div>
+      </div>
+      <p style="font-size:15px; color:#e6e9f0;">A new RofehAI dashboard account is requesting access.</p>
+      <table style="width:100%; font-size:14px; color:#e6e9f0; margin:16px 0; border-collapse:collapse;">
+        <tr><td style="padding:4px 0; color:#8891a8;">Email</td><td style="padding:4px 0;">{email}</td></tr>
+        <tr><td style="padding:4px 0; color:#8891a8;">Display name</td><td style="padding:4px 0;">{display_name}</td></tr>
+        <tr><td style="padding:4px 0; color:#8891a8;">NDA acknowledged</td><td style="padding:4px 0;">{nda_acknowledged_at}</td></tr>
+      </table>
+      <div style="text-align:center; margin:28px 0;">
+        <a href="{approve_url}" style="background:#2563eb;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;margin-right:10px;display:inline-block;">Approve</a>
+        <a href="{reject_url}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Reject</a>
+      </div>
+      <p style="font-size:12px; color:#8891a8;">This request will not be able to log in until approved. No password was included in this email, by design.</p>
+      <hr style="border:none; border-top:1px solid #232d45; margin:28px 0 16px;">
+      <p style="font-size:11px; color:#6b7387;">If this landed in Spam/Junk, please mark it &quot;Not spam&quot; and add this sender to your contacts so future access requests reach your inbox reliably.</p>
+      <p style="font-size:11px; color:#4a5068; text-align:center; margin-top:12px;">RofehAI reference implementation &middot; synthetic demo data &middot; not a medical device</p>
+    </div>
     """
     _send_email(recipients, f"RofehAI access request: {email}", html_body)
 

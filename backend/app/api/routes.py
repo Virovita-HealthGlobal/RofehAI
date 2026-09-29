@@ -238,7 +238,7 @@ def approve_signup(token: str):
     a password for anyone."""
     user = db.get_user_by_approval_token(token)
     if user is None:
-        return HTMLResponse("<h2>This approval link is invalid or has already been used.</h2>", status_code=404)
+        return HTMLResponse(notify.render_branded_page("This approval link is invalid or has already been used."), status_code=404)
 
     code = f"{secrets.randbelow(1_000_000):06d}"
     expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=PASSWORD_SET_TOKEN_LIFETIME_HOURS)
@@ -249,11 +249,14 @@ def approve_signup(token: str):
 
     try:
         notify.send_password_setup_email(user.username, user.display_name, set_password_url, code, is_reset=False)
-        return HTMLResponse(f"<h2>Approved. A password-setup code has been emailed to {user.username}.</h2>")
+        return HTMLResponse(notify.render_branded_page(f"Approved. A password-setup code has been emailed to {user.username}."))
     except notify.EmailError as e:
         return HTMLResponse(
-            f"<h2>Approved, but the email to {user.username} failed to send: {e}</h2>"
-            f"<p>The account is waiting for a password. You may need to resend this manually.</p>"
+            notify.render_branded_page(
+                f"Approved, but the email to {user.username} failed to send.",
+                f'<p style="font-size:13px; color:#c9cedb; text-align:center;">{e}</p>'
+                f'<p style="font-size:12px; color:#8891a8; text-align:center;">The account is waiting for a password. You may need to resend this manually.</p>',
+            )
         )
 
 
@@ -261,10 +264,10 @@ def approve_signup(token: str):
 def reject_signup(token: str):
     user = db.get_user_by_approval_token(token)
     if user is None:
-        return HTMLResponse("<h2>This link is invalid or has already been used.</h2>", status_code=404)
+        return HTMLResponse(notify.render_branded_page("This link is invalid or has already been used."), status_code=404)
     username = user.username
     db.reject_pending_user(user.id)
-    return HTMLResponse(f"<h2>Rejected. The request for '{username}' has been removed.</h2>")
+    return HTMLResponse(notify.render_branded_page(f"Rejected. The request for '{username}' has been removed."))
 
 
 @router.post("/auth/set-password")

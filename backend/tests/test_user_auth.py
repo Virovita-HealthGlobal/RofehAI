@@ -33,11 +33,14 @@ def _make_user(monkeypatch, username="reviewer1", password="a-real-password-123"
         monkeypatch.delenv("ROFEHAI_ADMIN_KEY", raising=False)
 
 
-def test_create_user_fails_closed_without_admin_key_configured():
+def test_create_user_fails_closed_without_admin_key_configured(monkeypatch):
     """Unlike the general API key (which defaults OPEN when unset --
     convenient for local dev), account creation must fail CLOSED when
     ROFEHAI_ADMIN_KEY isn't set. 'Forgot to configure a key' must not
     silently mean 'anyone can create accounts'."""
+    # The real deployment env has ROFEHAI_ADMIN_KEY set (as it should).
+    # This test needs the "unset" scenario, so it must force that explicitly.
+    monkeypatch.delenv("ROFEHAI_ADMIN_KEY", raising=False)
     r = client.post("/api/auth/users", json={"username": "x", "password": "password123"})
     assert r.status_code == 503
 

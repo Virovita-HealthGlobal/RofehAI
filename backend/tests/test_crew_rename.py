@@ -20,7 +20,11 @@ from app.main import app
 client = TestClient(app)
 
 
-def test_rename_requires_admin_key():
+def test_rename_requires_admin_key(monkeypatch):
+    # The real deployment env has ROFEHAI_ADMIN_KEY set (as it should).
+    # This test needs the "unset" scenario, so it must force that explicitly
+    # rather than relying on the ambient environment being empty.
+    monkeypatch.delenv("ROFEHAI_ADMIN_KEY", raising=False)
     r = client.put("/api/crew/crew-01/name", json={"display_name": "Dr. Test"})
     assert r.status_code == 503  # no ROFEHAI_ADMIN_KEY configured at all
 

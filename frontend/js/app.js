@@ -11,6 +11,7 @@
   let viewingAlerts = false;
   let speakAnswersEnabled = false;
   let voiceLang = "en-US";
+  window.ROFEHAI_LANG = voiceLang;
 
   const rosterList = document.getElementById("roster-list");
   const detailPanel = document.getElementById("detail-panel");
@@ -34,6 +35,7 @@
     });
     document.getElementById("voice-lang-select")?.addEventListener("change", (e) => {
       voiceLang = e.target.value;
+      window.ROFEHAI_LANG = voiceLang;
     });
 
     const [meta, crew, domains] = await Promise.all([

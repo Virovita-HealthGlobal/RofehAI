@@ -6,6 +6,10 @@ window.RofehAPI = (() => {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
+  function currentLang() {
+    return (window.ROFEHAI_LANG || "en").split("-")[0] || "en";
+  }
+
   async function get(path) {
     const res = await fetch(`${BASE}${path}`, { headers: { ...authHeaders() } });
     if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
@@ -27,12 +31,12 @@ window.RofehAPI = (() => {
     missionMeta: () => get("/mission/meta"),
     domains: () => get("/domains"),
     observations: (crewId, missionDay) => get(`/crew/${crewId}/observations?mission_day=${missionDay}`),
-    risk: (crewId, condition, missionDay) => get(`/crew/${crewId}/risk/${condition}?mission_day=${missionDay}`),
+    risk: (crewId, condition, missionDay) => get(`/crew/${crewId}/risk/${condition}?mission_day=${missionDay}&lang=${currentLang()}`),
     countermeasure: (crewId, condition, missionDay) =>
-      get(`/crew/${crewId}/countermeasure/${condition}?mission_day=${missionDay}`),
+      get(`/crew/${crewId}/countermeasure/${condition}?mission_day=${missionDay}&lang=${currentLang()}`),
     logCountermeasure: (entry) => post("/countermeasures/log", entry),
     askAgent: (crewId, question, conversationId) =>
-      post("/agent/ask", { crew_id: crewId || null, question, conversation_id: conversationId || null }),
+      post("/agent/ask", { crew_id: crewId || null, question, conversation_id: conversationId || null, lang: currentLang() }),
     // Clinical relay & response
     runMonitoringCheck: () => post("/monitoring/check", {}),
     listAlerts: (status) => get(`/alerts${status ? `?status=${status}` : ""}`),

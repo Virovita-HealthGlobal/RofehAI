@@ -359,13 +359,20 @@ the real thing: real NASA dataset integration, a trained sequence model
 with a reported real accuracy figure, the asynchronous Earth-feedback
 loop, and NVIDIA Jetson Orin edge deployment.
 
-**Near-term, not yet done**: a language picker for voice input/output
-(recognition and playback currently hardcoded to `en-US`); templated
-(not live-translated) multilingual agent narratives for at least one
-additional language, to keep the "never fabricates clinical text"
-guarantee true in every language offered; per-admin identity for the
-audit log and admin-key-gated actions generally, instead of one shared
-key.
+**Near-term, not yet done**: per-admin identity for the audit log and
+admin-key-gated actions generally, instead of one shared key; a
+native/qualified Russian speaker's review of the templated Russian
+narratives before use beyond internal testing (see `i18n.py`); more
+languages beyond Russian.
+
+**Authentication is single-factor** (password + server-issued session
+token) -- there is no second factor (email code, authenticator app, or
+similar) required on login itself. The existing single-use 6-digit
+email code is used only for initial password setup and password reset,
+not as an MFA step on every login. This is a deliberate scope decision
+for the concept-stage/synthetic-data demo, not an oversight -- a real
+deployment handling real health data would need MFA as a baseline
+requirement before go-live.
 
 ## Engineering hardening included so far
 

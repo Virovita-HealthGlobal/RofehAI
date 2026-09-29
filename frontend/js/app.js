@@ -9,6 +9,7 @@
   let fleetConversationId = null; // separate conversation thread for fleet-wide (crew-id-less) questions
   let commsLinkAvailable = true;
   let viewingAlerts = false;
+  let speakAnswersEnabled = false;
 
   const rosterList = document.getElementById("roster-list");
   const detailPanel = document.getElementById("detail-panel");
@@ -27,6 +28,10 @@
   }
 
   async function init() {
+    document.getElementById("speak-answers-toggle")?.addEventListener("change", (e) => {
+      speakAnswersEnabled = e.target.checked;
+    });
+
     const [meta, crew, domains] = await Promise.all([
       RofehAPI.missionMeta(),
       RofehAPI.listCrew(),
@@ -237,6 +242,59 @@
     `;
   }
 
+  function addVoiceButton(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input || input.dataset.voiceWired) return;
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) return;
+    input.dataset.voiceWired = "1";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "\u{1F3A4}";
+    btn.title = "Speak your question";
+    btn.style.cssText =
+      "background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text-1); padding:9px 12px; cursor:pointer; font-size:14px;";
+    input.insertAdjacentElement("afterend", btn);
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    let listening = false;
+    recognition.addEventListener("result", (e) => {
+      input.value = e.results[0][0].transcript;
+    });
+    recognition.addEventListener("end", () => {
+      listening = false;
+      btn.textContent = "\u{1F3A4}";
+    });
+    recognition.addEventListener("error", () => {
+      listening = false;
+      btn.textContent = "\u{1F3A4}";
+    });
+
+    btn.addEventListener("click", () => {
+      if (listening) {
+        recognition.stop();
+        return;
+      }
+      listening = true;
+      btn.textContent = "\u{1F534}";
+      recognition.start();
+    });
+  }
+
+  function speakAloud(text) {
+    if (!speakAnswersEnabled) return;
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "en-US";
+    window.speechSynthesis.speak(utter);
+  }
+
   function appendChatMessage(role, text, logId = "chat-log") {
     const log = document.getElementById(logId);
     if (!log) return;
@@ -248,11 +306,13 @@
     bubble.textContent = text;
     log.appendChild(bubble);
     log.scrollTop = log.scrollHeight;
+    if (role === "agent") speakAloud(text);
   }
 
   function wireFleetChatForm() {
     const form = document.getElementById("fleet-chat-form");
     if (!form) return;
+    addVoiceButton("fleet-chat-input");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = document.getElementById("fleet-chat-input");
@@ -281,6 +341,7 @@
   function wireChatForm() {
     const form = document.getElementById("chat-form");
     if (!form) return;
+    addVoiceButton("chat-input");
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = document.getElementById("chat-input");
@@ -615,7 +676,46 @@
         </thead>
         <tbody>${calls.slice(0, 20).map(callRow).join("")}</tbody>
       </table>
+
+      <h3 style="font-size:13px; color:var(--text-2); margin-top:24px;">Conversation audit trail</h3>
+      <div style="font-size:11px; color:var(--text-3); margin-bottom:8px;">Admin-only. Full question/answer transcripts, for compliance review.</div>
+      <button class="btn" type="button" id="view-audit-log-btn" style="font-size:12px;">View full conversation audit log (admin)</button>
+      <div id="audit-log-container" style="margin-top:12px;"></div>
     `;
+
+    document.getElementById("view-audit-log-btn")?.addEventListener("click", async () => {
+      const adminKey = window.prompt("Enter admin key to view the audit log:");
+      if (!adminKey) return;
+      const container = document.getElementById("audit-log-container");
+      container.innerHTML = `<div style="font-size:12px; color:var(--text-3);">Loading&hellip;</div>`;
+      try {
+        const res = await fetch(`${window.ROFEHAI_CONFIG.API_BASE}/agent/audit-log?limit=100`, {
+          headers: { "x-api-key": adminKey },
+        });
+        if (!res.ok) {
+          container.innerHTML = `<div style="font-size:12px; color:#e06666;">Failed to load audit log (${res.status}). Check the admin key.</div>`;
+          return;
+        }
+        const entries = await res.json();
+        if (!entries.length) {
+          container.innerHTML = `<div style="font-size:12px; color:var(--text-3);">No conversation records yet.</div>`;
+          return;
+        }
+        const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        container.innerHTML = entries
+          .map(
+            (e) => `
+          <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); padding:10px 12px; margin-bottom:8px; font-size:12px;">
+            <div style="color:var(--text-3); margin-bottom:6px;">${esc(e.crew_id || "fleet-wide")} &middot; ${esc(e.actor_name || "unknown user")} &middot; ${new Date(e.created_at).toLocaleString()}</div>
+            <div style="margin-bottom:4px;"><strong>Q:</strong> ${esc(e.question)}</div>
+            <div><strong>A:</strong> ${esc(e.answer)}</div>
+          </div>`
+          )
+          .join("");
+      } catch (err) {
+        container.innerHTML = `<div style="font-size:12px; color:#e06666;">Network error loading audit log.</div>`;
+      }
+    });
   }
 
   async function renderAlertsView() {

@@ -256,7 +256,7 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "\u{1F3A4}";
-    btn.title = "Speak your question";
+    btn.title = "Speak your question — review the transcribed text before clicking Ask, in case it mishears you";
     btn.style.cssText =
       "background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius); color:var(--text-1); padding:9px 12px; cursor:pointer; font-size:14px;";
     input.insertAdjacentElement("afterend", btn);

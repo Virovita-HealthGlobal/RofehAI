@@ -448,40 +448,45 @@ def submit_observation(obs: Observation):
 
 
 @router.get("/crew/{crew_id}/risk/{domain_id}", response_model=RiskOutput)
-def get_risk(crew_id: str, domain_id: str, mission_day: int = MISSION_LENGTH_DAYS):
+def get_risk(crew_id: str, domain_id: str, mission_day: int = MISSION_LENGTH_DAYS, lang: str = "en"):
     _require_domain(domain_id)
     _ensure_seeded(crew_id, mission_day)
     twin = registry.get_or_create(crew_id)
     if not twin.history:
         raise HTTPException(status_code=404, detail="Unknown crew member")
-    return score(twin, domain_id, mission_day)
+    return score(twin, domain_id, mission_day, lang=lang)
 
 
 @router.get("/crew/{crew_id}/risk", response_model=list[RiskOutput])
-def get_all_risk(crew_id: str, mission_day: int = MISSION_LENGTH_DAYS):
+def get_all_risk(crew_id: str, mission_day: int = MISSION_LENGTH_DAYS, lang: str = "en"):
     """Risk for every ACTIVE domain (architecture-ready placeholders are
     listed via /api/domains, not scored here -- there's nothing to score)."""
     _ensure_seeded(crew_id, mission_day)
     twin = registry.get_or_create(crew_id)
-    return [score(twin, d.id, mission_day) for d in active_domains()]
+    return [score(twin, d.id, mission_day, lang=lang) for d in active_domains()]
 
 
 @router.get("/crew/{crew_id}/countermeasure/{domain_id}")
-def get_countermeasure(crew_id: str, domain_id: str, mission_day: int = MISSION_LENGTH_DAYS):
+def get_countermeasure(crew_id: str, domain_id: str, mission_day: int = MISSION_LENGTH_DAYS, lang: str = "en"):
     _require_domain(domain_id)
     _ensure_seeded(crew_id, mission_day)
     twin = registry.get_or_create(crew_id)
-    risk = score(twin, domain_id, mission_day)
-    rec = cm.recommend(risk)
+    risk = score(twin, domain_id, mission_day, lang=lang)
+    rec = cm.recommend(risk, lang=lang)
     return rec.model_dump() if rec else None
 
 
 @router.post("/agent/ask", response_model=AgentAskResponse)
-def agent_ask(payload: AgentAskRequest):
+def agent_ask(payload: AgentAskRequest, authorization: str | None = Header(default=None)):
     if payload.crew_id is not None and payload.crew_id not in _KNOWN_CREW_IDS:
         raise HTTPException(status_code=404, detail=f"Unknown crew_id '{payload.crew_id}'")
+    user = get_current_user(authorization)
     try:
-        answer, sources, conversation_id = agent_core.run_agent(payload.crew_id, payload.question, payload.conversation_id)
+        answer, sources, conversation_id = agent_core.run_agent(
+            payload.crew_id, payload.question, payload.conversation_id,
+            actor_name=user.display_name if user else None,
+            lang=payload.lang or "en",
+        )
     except agent_core.AgentConversationError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except agent_core.AgentRateLimitError as e:
@@ -491,6 +496,29 @@ def agent_ask(payload: AgentAskRequest):
     return AgentAskResponse(
         crew_id=payload.crew_id, question=payload.question, answer=answer, sources=sources, conversation_id=conversation_id
     )
+
+
+@router.get("/agent/audit-log")
+def agent_audit_log(limit: int = 100, x_api_key: str | None = Header(default=None)):
+    """Full conversation transcript audit trail -- admin-key gated,
+    unlike /agent/usage which is metadata-only and unauthenticated.
+    Real question/answer text, plus which logged-in user (if any) asked
+    it, so this can serve as a genuine audit log."""
+    _require_admin_key(x_api_key)
+    calls = db.recent_agent_calls_full(limit)
+    return [
+        {
+            "crew_id": c.crew_id,
+            "conversation_id": c.conversation_id,
+            "question": c.question,
+            "answer": c.answer,
+            "actor_name": c.actor_name,
+            "tool_calls_made": c.tool_calls_made,
+            "used_recall": c.used_recall,
+            "created_at": c.created_at.isoformat(),
+        }
+        for c in calls
+    ]
 
 
 @router.get("/agent/usage")

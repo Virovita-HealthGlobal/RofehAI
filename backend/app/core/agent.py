@@ -42,6 +42,7 @@ import os
 from dataclasses import dataclass, field
 
 from app.core import countermeasures as cm
+from app.core import i18n
 from app.core.digital_twin import registry
 from app.core.domains import DOMAIN_REGISTRY, active_domains, all_domains
 from app.core.seeding import ensure_seeded
@@ -200,7 +201,7 @@ def _resolve_crew_id(tool_input: dict, bound_crew_id: str | None) -> str:
     return requested
 
 
-def _execute_tool(name: str, tool_input: dict, crew_id: str | None, fetched: _FetchedData) -> dict:
+def _execute_tool(name: str, tool_input: dict, crew_id: str | None, fetched: _FetchedData, lang: str = "en") -> dict:
     if name == "list_domains":
         return {"domains": [{"id": d.id, "display_name": d.display_name, "status": d.status} for d in all_domains()]}
 
@@ -214,7 +215,7 @@ def _execute_tool(name: str, tool_input: dict, crew_id: str | None, fetched: _Fe
         resolved_crew_id = _resolve_crew_id(tool_input, crew_id)
         ensure_seeded(resolved_crew_id, MISSION_LENGTH_DAYS)
         twin = registry.get_or_create(resolved_crew_id)
-        result = score(twin, domain_id, MISSION_LENGTH_DAYS)
+        result = score(twin, domain_id, MISSION_LENGTH_DAYS, lang=lang)
         fetched.risks[(resolved_crew_id, domain_id)] = result
         return result.model_dump()
 
@@ -225,9 +226,9 @@ def _execute_tool(name: str, tool_input: dict, crew_id: str | None, fetched: _Fe
         resolved_crew_id = _resolve_crew_id(tool_input, crew_id)
         ensure_seeded(resolved_crew_id, MISSION_LENGTH_DAYS)
         twin = registry.get_or_create(resolved_crew_id)
-        risk = fetched.risks.get((resolved_crew_id, domain_id)) or score(twin, domain_id, MISSION_LENGTH_DAYS)
+        risk = fetched.risks.get((resolved_crew_id, domain_id)) or score(twin, domain_id, MISSION_LENGTH_DAYS, lang=lang)
         fetched.risks[(resolved_crew_id, domain_id)] = risk
-        rec = cm.recommend(risk)
+        rec = cm.recommend(risk, lang=lang)
         fetched.countermeasures[(resolved_crew_id, domain_id)] = rec
         return rec.model_dump() if rec else {"countermeasure": None}
 
@@ -235,7 +236,7 @@ def _execute_tool(name: str, tool_input: dict, crew_id: str | None, fetched: _Fe
 
 
 def _compose_final_answer(
-    crew_id: str | None, tool_input: dict, fetched: _FetchedData, conversation_id: str | None = None
+    crew_id: str | None, tool_input: dict, fetched: _FetchedData, conversation_id: str | None = None, lang: str = "en"
 ) -> tuple[str, list[AgentSource]]:
     """The ONE place the final answer text is assembled. Every sentence
     here is either a fixed constant (OPENING_TONES), copied verbatim from
@@ -261,7 +262,7 @@ def _compose_final_answer(
     tone = tool_input.get("opening_tone")
     if tone not in OPENING_TONES:
         tone = "insufficient_data"
-    lines = [OPENING_TONES[tone]]
+    lines = [i18n.translate(i18n.OPENING_TONES_I18N.get(tone, {}), lang, OPENING_TONES[tone])]
     sources: list[AgentSource] = []
     from app.core import db as _db  # local import: avoids a module-level circular import (see recall block above)
     crew_name_overrides = _db.get_crew_name_overrides()
@@ -273,16 +274,20 @@ def _compose_final_answer(
         if risk.is_fallback:
             lines_out.append(f"\n**{display_name}:** {risk.narrative}")
         else:
+            current_risk_label = i18n.translate(i18n.GLUE_I18N["current_risk"], lang, "current risk")
+            confidence_label = i18n.translate(i18n.GLUE_I18N["confidence"], lang, "confidence")
+            day_suffix = i18n.translate(i18n.GLUE_I18N["day_suffix"], lang, "d")
             lines_out.append(
-                f"\n**{display_name}:** {round(risk.current_risk * 100)}% current risk "
-                f"({'+' if risk.risk_delta_30d >= 0 else ''}{round(risk.risk_delta_30d * 100)}% / 30d), "
-                f"confidence {risk.confidence:.2f}. {risk.narrative}"
+                f"\n**{display_name}:** {round(risk.current_risk * 100)}% {current_risk_label} "
+                f"({'+' if risk.risk_delta_30d >= 0 else ''}{round(risk.risk_delta_30d * 100)}% / 30{day_suffix}), "
+                f"{confidence_label} {risk.confidence:.2f}. {risk.narrative}"
             )
         sources_out.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="risk"))
         if include_cm:
             rec = fetched.countermeasures.get((section_crew_id, domain_id))
             if rec:
-                lines_out.append(f"  Suggested: {rec.countermeasure.name} -- {rec.rationale}")
+                suggested_label = i18n.translate(i18n.GLUE_I18N["suggested"], lang, "Suggested")
+                lines_out.append(f"  {suggested_label}: {rec.countermeasure.name} -- {rec.rationale}")
                 sources_out.append(AgentSource(crew_id=section_crew_id, domain_id=domain_id, kind="countermeasure"))
 
     if crew_id is not None:
@@ -345,7 +350,10 @@ def _compose_final_answer(
                 render_entry(lines, sources, section_crew_id, domain_id, risk, include_cm)
 
     lines.append(
-        "\n\n_This is decision support, not a diagnosis. A human reviewer must confirm any action._"
+        i18n.translate(
+            i18n.DISCLAIMER_I18N, lang,
+            "\n\n_This is decision support, not a diagnosis. A human reviewer must confirm any action._",
+        )
     )
     return "\n".join(lines), sources
 
@@ -396,7 +404,10 @@ def _check_rate_limit() -> None:
 FLEET_SENTINEL = "__fleet__"  # stand-in crew_id for conversation/logging storage on fleet-wide requests
 
 
-def run_agent(crew_id: str | None, question: str, conversation_id: str | None = None) -> tuple[str, list[AgentSource], str]:
+def run_agent(
+    crew_id: str | None, question: str, conversation_id: str | None = None, actor_name: str | None = None, lang: str = "en"
+) -> tuple[str, list[AgentSource], str]:
+    lang = i18n.normalize_lang(lang)
     api_key = os.environ.get(ANTHROPIC_API_KEY_ENV_VAR)
     if not api_key:
         raise AgentError(
@@ -476,7 +487,7 @@ def run_agent(crew_id: str | None, question: str, conversation_id: str | None = 
 
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         if not tool_uses:
-            answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id)
+            answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id, lang=lang)
             break
 
         messages.append({"role": "assistant", "content": response.content})
@@ -484,13 +495,13 @@ def run_agent(crew_id: str | None, question: str, conversation_id: str | None = 
         compose_call = next((t for t in tool_uses if t.name == "compose_answer"), None)
         if compose_call:
             used_recall = bool(compose_call.input.get("recall_prior_answer"))
-            answer, sources = _compose_final_answer(crew_id, compose_call.input, fetched, conversation_id)
+            answer, sources = _compose_final_answer(crew_id, compose_call.input, fetched, conversation_id, lang=lang)
             break
 
         tool_results = []
         for t in tool_uses:
             try:
-                result = _execute_tool(t.name, t.input, crew_id, fetched)
+                result = _execute_tool(t.name, t.input, crew_id, fetched, lang=lang)
                 tool_calls_made += 1
             except AgentError as e:
                 result = {"error": str(e)}
@@ -498,8 +509,11 @@ def run_agent(crew_id: str | None, question: str, conversation_id: str | None = 
         messages.append({"role": "user", "content": tool_results})
     else:
         # Ran out of turns without the model finalizing -- fail safe, not open-ended.
-        answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id)
+        answer, sources = _compose_final_answer(crew_id, {"opening_tone": "insufficient_data", "sections": []}, fetched, conversation_id, lang=lang)
 
     db.save_agent_message(conversation_id, "assistant", answer)
-    db.log_agent_call(storage_crew_id, conversation_id, len(question), tool_calls_made, used_recall)
+    db.log_agent_call(
+        storage_crew_id, conversation_id, len(question), tool_calls_made, used_recall,
+        question=question, answer=answer, actor_name=actor_name,
+    )
     return answer, sources, conversation_id

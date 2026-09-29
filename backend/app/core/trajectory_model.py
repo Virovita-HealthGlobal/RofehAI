@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from app.core import i18n
 from app.core.digital_twin import DigitalTwin
 from app.core.domains import DOMAIN_REGISTRY, NOT_IMPLEMENTED_NARRATIVE, HealthDomain
 from app.models.schemas import RiskOutput
@@ -73,19 +74,22 @@ def _fallback_output(twin: DigitalTwin, domain: HealthDomain, mission_day: int, 
     )
 
 
-def score(twin: DigitalTwin, domain_id: str, mission_day: int) -> RiskOutput:
+def score(twin: DigitalTwin, domain_id: str, mission_day: int, lang: str = "en") -> RiskOutput:
+    lang = i18n.normalize_lang(lang)
     domain = DOMAIN_REGISTRY[domain_id]
 
     # Architecture-ready domains have no signals wired up -- return an
     # explicit "not implemented" output rather than fabricate a score.
     if domain.status != "active" or not domain.signals:
-        return _fallback_output(twin, domain, mission_day, NOT_IMPLEMENTED_NARRATIVE)
+        narrative = i18n.translate(i18n.NOT_IMPLEMENTED_NARRATIVE_I18N, lang, NOT_IMPLEMENTED_NARRATIVE)
+        return _fallback_output(twin, domain, mission_day, narrative)
 
     baseline = twin.baseline()
     window_obs = twin.window(mission_day, TRAJECTORY_WINDOW_DAYS)
 
     if baseline is None or len(window_obs) < MIN_OBSERVATIONS_FOR_CONFIDENCE:
-        return _fallback_output(twin, domain, mission_day, FALLBACK_NARRATIVE)
+        narrative = i18n.translate(i18n.FALLBACK_NARRATIVE_I18N, lang, FALLBACK_NARRATIVE)
+        return _fallback_output(twin, domain, mission_day, narrative)
 
     days = np.array([o.mission_day for o in window_obs], dtype=float)
     per_signal_contrib: list[tuple[str, float, float]] = []  # (label, weighted deviation, fit)
@@ -119,7 +123,7 @@ def score(twin: DigitalTwin, domain_id: str, mission_day: int) -> RiskOutput:
         fused_level += weighted_dev
         fused_slope += spec.weight * slope
         fit_scores.append(fit)
-        per_signal_contrib.append((spec.label, abs(weighted_dev), fit))
+        per_signal_contrib.append((spec.label, spec.field, abs(weighted_dev), fit))
 
     # Squash fused level into a 0-1 risk score.
     current_risk = float(1 / (1 + np.exp(-4 * fused_level)))
@@ -131,16 +135,19 @@ def score(twin: DigitalTwin, domain_id: str, mission_day: int) -> RiskOutput:
     confidence = float(np.clip(0.5 * data_density + 0.5 * avg_fit, 0, 1))
 
     top_contributors = [
-        label for label, _, _ in sorted(per_signal_contrib, key=lambda t: -t[1])[:2]
+        i18n.translate(i18n.SIGNAL_LABELS.get(field, {}), lang, label)
+        for label, field, _, _ in sorted(per_signal_contrib, key=lambda t: -t[2])[:2]
     ]
 
     is_fallback = confidence < CONFIDENCE_THRESHOLD
     elevated = current_risk > 0.5 and risk_delta > 0
 
     if is_fallback:
-        narrative = FALLBACK_NARRATIVE
+        narrative = i18n.translate(i18n.FALLBACK_NARRATIVE_I18N, lang, FALLBACK_NARRATIVE)
     else:
-        template = domain.narrative_elevated if elevated else domain.narrative_stable
+        tone = "elevated" if elevated else "stable"
+        template_en = domain.narrative_elevated if elevated else domain.narrative_stable
+        template = i18n.translate(i18n.DOMAIN_NARRATIVES.get(domain.id, {}).get(tone, {}), lang, template_en)
         narrative = template.format(window=TRAJECTORY_WINDOW_DAYS)
 
     return RiskOutput(

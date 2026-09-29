@@ -146,6 +146,9 @@ class AgentAskRequest(BaseModel):
     conversation_id: Optional[str] = Field(
         None, description="Continue an existing conversation thread. Omit to start a new one."
     )
+    lang: Optional[str] = Field(
+        None, description="BCP-47-ish language code (e.g. 'ru') for the answer. Omit or 'en' for English."
+    )
 
 
 class AgentSource(BaseModel):

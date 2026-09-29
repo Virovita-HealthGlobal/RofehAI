@@ -136,6 +136,39 @@ of the model's live behavior beyond the cases in `test_agent.py` and
 manual spot-checks, no monitoring/alerting on top of the usage log. See
 `docs/ARCHITECTURE.md` for the honest production-readiness assessment.
 
+## Voice access & conversation audit trail
+
+The briefing agent is reachable as chat **and voice**, from any device
+with a modern browser and an internet connection (including from
+Earth — it's a hosted web page, not a local app; no VPN, pairing, or
+special client required).
+
+- **Voice input**: browser-native `SpeechRecognition`
+  (`webkitSpeechRecognition` on Chrome/Safari) — a mic button appears
+  next to both chat inputs (per-crew and fleet-wide) when the browser
+  supports it, and is silently omitted when it doesn't. Speech is
+  transcribed client-side into the existing text input; nothing new is
+  sent to the backend, no third-party speech API is involved.
+- **Voice output**: browser-native `speechSynthesis`, opt-in via a
+  "Speak answers aloud" toggle in the header. Off by default.
+- **Deliberately out of scope for now**: no telephony/SMS access, no
+  offline mode, no dedicated mobile app — all scoped out to keep the
+  voice feature client-side and zero-infrastructure. See Roadmap.
+- **Conversation audit trail** (`GET /api/agent/audit-log`, admin-key
+  protected): every `/api/agent/ask` call now stores the full question,
+  full answer, and the logged-in user's display name (`actor_name`)
+  alongside the existing usage metadata (crew ID, tool calls, memory
+  recall), in the same `AgentCallLog` table. Viewable from the Agent &
+  System Metrics panel.
+- **On the "HIPAA" question, stated plainly**: this is a real audit
+  trail (who asked what, when, and what came back) — it is **not** a
+  HIPAA-compliant system. All data in this repo's default configuration
+  is synthetic, there's no BAA, no encryption-at-rest attestation, no
+  per-admin identity (the audit log is gated by one shared admin key,
+  not individual accounts), and no retention/deletion policy on
+  transcripts. Treat this as the foundation a real compliance program
+  would build on, not a finished one.
+
 ## Clinical relay & response (near-real-time alerting)
 
 `backend/app/core/monitoring.py` — a PUSH-based complement to the PULL-based
@@ -262,6 +295,15 @@ loads under `rofehai.com`, and `app.rofehai.com` remains unaffected.
   sweep trigger, and a live pending-alert count badge; "View alerts"
   opens the full evidence-package list with the acknowledge flow — see
   the Clinical Relay section above
+- **Agent & System Metrics** (sidebar) — agent call volume today,
+  clinical alert relay latency (detection to queued to transmitted to
+  clinician acknowledged, all measured not simulated), a recent-calls
+  table, and the admin-gated full conversation audit log described
+  above
+- **About / how to use** (`about.html`) — standalone page covering what
+  the demo is, who it's for, what it's not, and how to use it; kept
+  separate from the minimal gate/login screen so the sign-in page stays
+  a sign-in page
 
 ## Regulatory positioning (read this if you're extending the API)
 
@@ -287,6 +329,20 @@ Short answer: **use `rofehai.com`** as the primary domain; reserve
 anything load-bearing on it. Full reasoning in
 [`docs/DOMAIN.md`](docs/DOMAIN.md).
 
+## Infrastructure (DNS / TLS)
+
+DNS for `rofehai.com` is managed directly through Hostinger's own
+nameservers (not Cloudflare) — `A` records for the bare domain, `app.`,
+and `api.` all point at the VPS. TLS is issued and auto-renewed by
+Certbot/Let's Encrypt against the host's own nginx
+(`/etc/nginx/sites-available/rofehai.com`), the same pattern used for
+the other products on this VPS. `cloudflared` is still installed but no
+longer load-bearing for this domain — traffic no longer depends on a
+Cloudflare Tunnel. This setup was chosen after a Cloudflare account
+lockout made DNS changes impossible mid-incident; moving to a DNS
+provider tied to the domain registrar itself avoids that single point
+of failure going forward.
+
 ## Deployment (NVIDIA Inception / AWS Activate / Google Cloud for Startups)
 
 If you're standing up real (non-local) infrastructure and have access to
@@ -302,6 +358,14 @@ list of what turns this from a working reference implementation into
 the real thing: real NASA dataset integration, a trained sequence model
 with a reported real accuracy figure, the asynchronous Earth-feedback
 loop, and NVIDIA Jetson Orin edge deployment.
+
+**Near-term, not yet done**: a language picker for voice input/output
+(recognition and playback currently hardcoded to `en-US`); templated
+(not live-translated) multilingual agent narratives for at least one
+additional language, to keep the "never fabricates clinical text"
+guarantee true in every language offered; per-admin identity for the
+audit log and admin-key-gated actions generally, instead of one shared
+key.
 
 ## Engineering hardening included so far
 

@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from app.core import agent as agent_core
 from app.core import countermeasures as cm
 from app.core import db
+from app.core import email_policy
 from app.core import monitoring
 from app.core import notify
 from app.core import user_auth
@@ -201,6 +202,11 @@ def signup(payload: dict):
         raise HTTPException(status_code=400, detail="A professional email address is required")
     if not EMAIL_PATTERN.match(email):
         raise HTTPException(status_code=400, detail="That doesn't look like a valid email address")
+    if email_policy.is_free_email_domain(email):
+        raise HTTPException(
+            status_code=400,
+            detail="Please use a professional (work) email address. Personal providers like Gmail, Yahoo, Outlook.com, or iCloud aren't accepted for access requests.",
+        )
     if not nda_acknowledged:
         raise HTTPException(status_code=400, detail="NDA acknowledgment is required to request access")
     if db.get_user_by_username(email):

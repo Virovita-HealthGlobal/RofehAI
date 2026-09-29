@@ -68,6 +68,19 @@ def test_signup_accepts_real_looking_email():
     mock_send.assert_called_once()
 
 
+def test_signup_rejects_free_email_provider():
+    r, mock_send = _signup(email="someone@gmail.com")
+    assert r.status_code == 400
+    mock_send.assert_not_called()
+    assert db.get_user_by_username("someone@gmail.com") is None
+
+
+def test_signup_rejects_free_email_provider_case_insensitive():
+    r, mock_send = _signup(email="Someone@YAHOO.COM")
+    assert r.status_code == 400
+    mock_send.assert_not_called()
+
+
 def test_signup_requires_nda_acknowledgment():
     r, mock_send = _signup(email="no_nda@example.com", nda=False)
     assert r.status_code == 400

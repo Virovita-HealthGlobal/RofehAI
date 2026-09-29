@@ -160,6 +160,24 @@
     max-width: 680px;
   }
 
+  section.mission-photo { padding: 54px 0; border-top: 1px solid var(--border); }
+  .mission-photo figure { margin: 0; }
+  .mission-photo img {
+    width: 100%;
+    max-height: 520px;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    display: block;
+  }
+  .mission-photo figcaption {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--text-3);
+    max-width: 680px;
+    line-height: 1.6;
+  }
+
   /* Sections */
   section.capabilities { padding: 60px 0 70px; border-top: 1px solid var(--border); }
   .capabilities h2 {
@@ -306,6 +324,13 @@
     <section class="problem">
       <h2>Earth is minutes away. Sometimes it isn't reachable at all.</h2>
       <p>A message to and from a Mars-class mission can take the better part of an hour round-trip — and a solar event or an antenna misalignment can cut that link off completely. Long-duration spaceflight carries real risks, like SANS and immune dysregulation, that today's monitoring checks against a population average rather than how a specific person has actually been trending. By the time Earth learns something is wrong, the crew has usually already had to notice it, work out what it means, and describe it themselves.</p>
+    </section>
+
+    <section class="mission-photo">
+      <figure>
+        <img src="assets/nasa-eye-ultrasound.jpg" alt="NASA astronaut Chris Ferguson undergoing an ocular ultrasound exam as part of a spaceflight health assessment" />
+        <figcaption>NASA astronaut Chris Ferguson undergoes an ocular ultrasound exam as part of a spaceflight health assessment — the same imaging technique used to monitor SANS-related changes before, during, and after a mission, which RofehAI is built to track and trend over time. Photo: NASA.</figcaption>
+      </figure>
     </section>
 
     <section class="capabilities" id="capabilities">

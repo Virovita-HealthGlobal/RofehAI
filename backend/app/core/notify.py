@@ -36,6 +36,24 @@ class EmailError(Exception):
     pass
 
 
+def _html_to_text(html: str) -> str:
+    """Best-effort plain-text version of one of our own HTML email
+    bodies, for the required multipart/alternative text/plain part.
+    Not a general HTML parser -- only needs to handle the small set of
+    tags actually used in the templates below."""
+    import re
+
+    text = html
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p>", "\n\n", text)
+    text = re.sub(r"(?i)</li>", "\n", text)
+    text = re.sub(r'(?i)<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', r"\2 (\1)", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _send_email(to_addresses: list[str], subject: str, html_body: str, reply_to: str | None = None) -> None:
     """The one place that actually talks to the SMTP server. Every
     public function below builds its own HTML content and calls this."""
@@ -56,10 +74,16 @@ def _send_email(to_addresses: list[str], subject: str, html_body: str, reply_to:
 
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    message["From"] = username
+    message["From"] = f"RofehAI <{username}>"
     message["To"] = ", ".join(to_addresses)
     if reply_to:
         message["Reply-To"] = reply_to
+    # Attach plain-text FIRST, then HTML -- multipart/alternative order is
+    # least-preferred-first. An HTML-only multipart/alternative message is
+    # a well-known spam-filter trigger even when SPF/DKIM/DMARC all pass
+    # (confirmed via a live X-Spam: Yes flag on a real Hostinger delivery
+    # with fully-passing auth) -- never attach HTML-only again.
+    message.attach(MIMEText(_html_to_text(html_body), "plain"))
     message.attach(MIMEText(html_body, "html"))
 
     try:
@@ -114,14 +138,24 @@ def send_password_setup_email(email: str, display_name: str, set_password_url: s
         else "Your RofehAI access request has been approved. Use the code below to create your password and sign in."
     )
     html_body = f"""
-    <p>Hi {display_name},</p>
-    <p>{intro}</p>
-    <p style="font-size:32px;font-weight:700;letter-spacing:6px;font-family:monospace;
-      background:#f0f0f0;padding:16px 20px;border-radius:8px;display:inline-block;">{code}</p>
-    <p>Enter this code along with your email at:
-      <a href="{set_password_url}">{set_password_url}</a></p>
-    <p style="color:#888;font-size:12px;">This code expires in 48 hours and can only be used once.
-    If you didn't request this, you can safely ignore this email.</p>
+    <div style="font-family:Arial,Helvetica,sans-serif; max-width:480px; margin:0 auto; padding:32px 24px; background:#0b1220; border-radius:12px; color:#e6e9f0;">
+      <div style="text-align:center; margin-bottom:24px;">
+        <div style="font-size:20px; font-weight:700; color:#ffffff; letter-spacing:0.5px;">RofehAI</div>
+        <div style="font-size:12px; color:#8891a8; margin-top:2px;">your physician, everywhere</div>
+      </div>
+      <p style="font-size:15px; color:#e6e9f0;">Hi {display_name},</p>
+      <p style="font-size:15px; color:#e6e9f0;">{intro}</p>
+      <div style="text-align:center; margin:28px 0;">
+        <span style="display:inline-block; font-size:32px; font-weight:700; letter-spacing:6px; font-family:'Courier New',monospace; background:#141d33; color:#ffffff; padding:16px 24px; border-radius:8px; border:1px solid #2a3a5c;">{code}</span>
+      </div>
+      <p style="text-align:center; margin:24px 0;">
+        <a href="{set_password_url}" style="display:inline-block; background:#2563eb; color:#ffffff; font-size:14px; font-weight:600; text-decoration:none; padding:12px 28px; border-radius:6px;">Enter code &amp; set password</a>
+      </p>
+      <p style="font-size:12px; color:#8891a8; text-align:center; word-break:break-all;">Or open: <a href="{set_password_url}" style="color:#6f9bff;">{set_password_url}</a></p>
+      <hr style="border:none; border-top:1px solid #232d45; margin:28px 0 16px;">
+      <p style="font-size:12px; color:#6b7387;">This code expires in 48 hours and can only be used once. If you didn't request this, you can safely ignore this email.</p>
+      <p style="font-size:11px; color:#4a5068; text-align:center; margin-top:20px;">RofehAI reference implementation &middot; synthetic demo data &middot; not a medical device</p>
+    </div>
     """
     subject = "Reset your RofehAI password" if is_reset else "You're approved — create your RofehAI password"
     _send_email([email], subject, html_body)

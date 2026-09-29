@@ -10,6 +10,7 @@
   let commsLinkAvailable = true;
   let viewingAlerts = false;
   let speakAnswersEnabled = false;
+  let voiceLang = "en-US";
 
   const rosterList = document.getElementById("roster-list");
   const detailPanel = document.getElementById("detail-panel");
@@ -30,6 +31,9 @@
   async function init() {
     document.getElementById("speak-answers-toggle")?.addEventListener("change", (e) => {
       speakAnswersEnabled = e.target.checked;
+    });
+    document.getElementById("voice-lang-select")?.addEventListener("change", (e) => {
+      voiceLang = e.target.value;
     });
 
     const [meta, crew, domains] = await Promise.all([
@@ -258,7 +262,7 @@
     input.insertAdjacentElement("afterend", btn);
 
     const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-US";
+    recognition.lang = voiceLang;
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
@@ -291,7 +295,7 @@
     if (!("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "en-US";
+    utter.lang = voiceLang;
     window.speechSynthesis.speak(utter);
   }
 

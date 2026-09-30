@@ -74,8 +74,8 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
-.topbar-brand { display: flex; align-items: center; gap: 10px; }
-.brand-mark { width: 34px; height: 34px; flex-shrink: 0; object-fit: contain; }
+.topbar-brand { display: flex; align-items: center; gap: 12px; background: #ffffff; padding: 10px 18px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
+.brand-mark { height: 44px; width: auto; flex-shrink: 0; object-fit: contain; }
 .brand-name { font-weight: 600; font-size: 17px; letter-spacing: 0.2px; }
 .brand-tag { font-size: 11px; color: var(--text-3); }
 

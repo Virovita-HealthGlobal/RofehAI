@@ -81,6 +81,9 @@ class AgentCallLog(SQLModel, table=True):
     tool_calls_made: int
     used_recall: bool
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    question: str | None = None
+    answer: str | None = None
+    actor_name: str | None = None  # display_name of the logged-in user who asked, if known
 
 
 class LastKnownRiskState(SQLModel, table=True):
@@ -298,7 +301,16 @@ def load_agent_messages(conversation_id: str):
         return session.exec(stmt.order_by(AgentMessage.created_at)).all()
 
 
-def log_agent_call(crew_id: str, conversation_id: str, question_length: int, tool_calls_made: int, used_recall: bool) -> None:
+def log_agent_call(
+    crew_id: str,
+    conversation_id: str,
+    question_length: int,
+    tool_calls_made: int,
+    used_recall: bool,
+    question: str | None = None,
+    answer: str | None = None,
+    actor_name: str | None = None,
+) -> None:
     with Session(engine) as session:
         session.add(
             AgentCallLog(
@@ -307,6 +319,9 @@ def log_agent_call(crew_id: str, conversation_id: str, question_length: int, too
                 question_length=question_length,
                 tool_calls_made=tool_calls_made,
                 used_recall=used_recall,
+                question=question,
+                answer=answer,
+                actor_name=actor_name,
             )
         )
         session.commit()
@@ -322,6 +337,16 @@ def count_agent_calls_since(since: datetime) -> int:
 
 
 def recent_agent_calls(limit: int = 50):
+    with Session(engine) as session:
+        stmt = select(AgentCallLog).order_by(AgentCallLog.created_at.desc()).limit(limit)
+        return session.exec(stmt).all()
+
+
+def recent_agent_calls_full(limit: int = 100):
+    """Same as recent_agent_calls but includes full question/answer text
+    and actor_name -- this is the real audit trail, so it's gated behind
+    the admin key at the route level, never exposed on the public
+    /agent/usage endpoint."""
     with Session(engine) as session:
         stmt = select(AgentCallLog).order_by(AgentCallLog.created_at.desc()).limit(limit)
         return session.exec(stmt).all()

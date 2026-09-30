@@ -35,13 +35,22 @@
   .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
 
   header.top {
+    background: #ffffff;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 26px 0;
+    padding: 16px 48px;
+    width: 100vw;
+    position: relative;
+    left: 50%;
+    right: 50%;
+    margin-left: -50vw;
+    margin-right: -50vw;
+    margin-bottom: 32px;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.08);
   }
   .brand { display: flex; align-items: center; gap: 10px; }
-  .brand img { width: 30px; height: 30px; }
+  .brand img { height: 36px; width: auto; }
   .brand span { font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
   .top-actions a {
     text-decoration: none;
@@ -273,12 +282,11 @@
   <div class="wrap">
     <header class="top">
       <div class="brand">
-        <img src="assets/icon.png" alt="RofehAI" />
-        <span>RofehAI</span>
+        <img src="assets/icon.png" alt="RofehAI" style="height:44px;width:auto;" />
       </div>
       <div class="top-actions">
-        <a href="https://app.rofehai.com/gate.html">Sign in</a>
-        <a href="https://app.rofehai.com/gate.html" class="cta-small">Request access</a>
+        <a href="https://app.rofehai.com/gate.html" style="color:#0a1020;font-weight:500;">Sign in</a>
+        <a href="https://app.rofehai.com/gate.html" class="cta-small" style="color:#ffffff;background:#1a56db;border:none;font-weight:600;">Request access</a>
       </div>
     </header>
 

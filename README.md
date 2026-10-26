@@ -550,3 +550,16 @@ Added on top of the initial reference implementation, still well short of
   A patent application covering aspects of this system is in
   preparation; do not distribute outside parties bound by an appropriate
   confidentiality agreement without authorization.
+
+## Open Agent Hackathon 2026 — Sponsor Technology
+
+RofehAI was extended for the Open Agent Hackathon 2026 using three sponsor technologies:
+
+**DATA — Zetaris**
+Zetaris serves as the federated data layer. Longitudinal astronaut health records are queried across distributed sources without moving sensitive data. The AI queries the data where it lives, preserving privacy across every source.
+
+**BUILD — H-MEM (Meterless Engine)**
+H-MEM is implemented as the briefing memory engine. It retains clinical context across sessions, giving flight surgeons a briefing agent that remembers every patient interaction. Context persistence is validated across sessions with no data loss between interactions.
+
+**POWER — NVIDIA Nemotron via Meterless Nightshift**
+Meterless Nightshift is the primary AI provider. NVIDIA Nemotron powers the grounded briefing agent, answering only from retrieved data. Every response is traceable to its source. The human makes every call.

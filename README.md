@@ -75,9 +75,7 @@ docker compose up --build
 - Backend: `http://localhost:8000`
 - Frontend: `http://localhost:8080`
 
-Note: the containerized frontend still points at `http://localhost:8000`
-by default (see `frontend/js/config.js`); adjust for your deployment
-target (e.g. a real `api.rofehai.com`) before shipping.
+Note: the frontend is configured to talk to `https://api.rofehai.com/api` by default (see `frontend/js/config.js`).
 
 ## Briefing agent (`POST /api/agent/ask`)
 
@@ -563,3 +561,4 @@ H-MEM is implemented as the briefing memory engine. It retains clinical context 
 
 **POWER — NVIDIA Nemotron via Meterless Nightshift**
 Meterless Nightshift is the primary AI provider. NVIDIA Nemotron powers the grounded briefing agent, answering only from retrieved data. Every response is traceable to its source. The human makes every call.
+

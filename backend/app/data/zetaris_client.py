@@ -14,14 +14,22 @@ Open Agent Hackathon 2026 -- Data layer sponsor: Zetaris
 """
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
 ZETARIS_ENDPOINT = os.environ.get("ZETARIS_ENDPOINT", "")
 ZETARIS_API_KEY  = os.environ.get("ZETARIS_API_KEY", "")
+ZETARIS_ORG_ID   = os.environ.get("ZETARIS_ORG_ID", "")
 
 def _zetaris_available() -> bool:
     return bool(ZETARIS_ENDPOINT and ZETARIS_API_KEY)
+
+def _validate_crew_id(crew_id: str) -> str:
+    """Restrict crew_id to safe alphanumeric/dash/underscore values."""
+    if not re.match(r'^[a-zA-Z0-9_-]+$', crew_id):
+        raise ValueError(f"Invalid crew_id: {crew_id!r}")
+    return crew_id
 
 def query_crew_observations(crew_id: str, up_to_day: int | None = None):
     """
@@ -33,16 +41,20 @@ def query_crew_observations(crew_id: str, up_to_day: int | None = None):
     if _zetaris_available():
         try:
             import httpx
+            safe_crew_id = _validate_crew_id(crew_id)
             sql = (
                 f"SELECT * FROM mission_observations "
-                f"WHERE crew_id = "{crew_id}" "
-                + (f"AND mission_day <= {up_to_day} " if up_to_day else "")
+                f"WHERE crew_id = '{safe_crew_id}' "
+                + (f"AND mission_day <= {int(up_to_day)} " if up_to_day else "")
                 + "ORDER BY mission_day ASC"
             )
+            headers = {"Authorization": f"Bearer {ZETARIS_API_KEY}"}
+            if ZETARIS_ORG_ID:
+                headers["X-Org-ID"] = ZETARIS_ORG_ID
             resp = httpx.post(
-                f"{ZETARIS_ENDPOINT}/api/v1/query",
+                f"{ZETARIS_ENDPOINT}/sql-editor/sqls/run",
                 json={"sql": sql},
-                headers={"Authorization": f"Bearer {ZETARIS_API_KEY}"},
+                headers=headers,
                 timeout=10.0,
             )
             resp.raise_for_status()

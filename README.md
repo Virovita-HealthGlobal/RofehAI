@@ -549,16 +549,61 @@ Added on top of the initial reference implementation, still well short of
   preparation; do not distribute outside parties bound by an appropriate
   confidentiality agreement without authorization.
 
-## Open Agent Hackathon 2026 — Sponsor Technology
+## Open Agent Hackathon 2026
 
-RofehAI was extended for the Open Agent Hackathon 2026 using three sponsor technologies:
+**Track:** Wildcard [Tinkerer] — Bring Your Own Project
+**Submitted by:** Giscard Minlend · Virovita Health Global · giscard@virovita.io
 
-**DATA — Zetaris**
-Zetaris serves as the federated data layer. Longitudinal astronaut health records are queried across distributed sources without moving sensitive data. The AI queries the data where it lives, preserving privacy across every source.
+### Live Demo
 
-**BUILD — H-MEM (Meterless Engine)**
-H-MEM is implemented as the briefing memory engine. It retains clinical context across sessions, giving flight surgeons a briefing agent that remembers every patient interaction. Context persistence is validated across sessions with no data loss between interactions.
+| | |
+|---|---|
+| **App** | https://app.rofehai.com |
+| **API** | https://api.rofehai.com |
+| **Slide deck** | https://claude.ai/artifact/Ltb73x72tm3YSdKBKw9Kke |
+| **Whitepaper (Zetaris integration)** | https://claude.ai/artifact/T1YcN2KcGPtATo8orVoKZy |
 
-**POWER — NVIDIA Nemotron via Meterless Nightshift**
-Meterless Nightshift is the primary AI provider. NVIDIA Nemotron powers the grounded briefing agent, answering only from retrieved data. Every response is traceable to its source. The human makes every call.
+### Sponsor Technology Integration
 
+RofehAI was extended for the hackathon using all three sponsor technology layers:
+
+**DATA — Zetaris** (`backend/app/data/zetaris_client.py` · commit `d29c0db`)
+
+Zetaris is the federated data layer. The `zetaris_client.py` module executes SQL queries against the Zetaris Virtual Data Layer (VDL) — pushing computation to the source rather than moving raw records. The agent's `get_risk` tool calls `query_crew_observations()`, which issues a `POST /api/v1/query` to the configured Zetaris endpoint.
+
+When `ZETARIS_ENDPOINT` and `ZETARIS_API_KEY` are set in the environment, the client runs live VDL federation. When they are not set (demo mode), the client falls back to synthetic data and explicitly tells the user so — the disclaimer is surfaced in the agent's response, not hidden. This design was introduced following mentor feedback (Saketh, Open Agent Hackathon) to ensure the demo is honest about what is real vs. synthetic.
+
+**BUILD — Meterless Nightshift + H-MEM** (`backend/app/core/agent.py` · commit `baa933d`)
+
+Meterless Nightshift runs locally on a Windows PC (port 8088), exposed to the VPS via ngrok static domain `update-banish-decent.ngrok-free.dev`. The agent calls Nightshift's OpenAI-compatible API (`/v1/chat/completions`). H-MEM (Meterless persistent memory) retains clinical context across sessions — the agent passes a `session_id` to preserve briefing continuity across interactions for the same crew member.
+
+**POWER — NVIDIA Nemotron** (via Meterless Nightshift · `agent.py` commit `baa933d`)
+
+The model served by Meterless Nightshift is `nvidia/llama-3.1-nemotron-70b-instruct`. When the local Nightshift PC is offline, `agent.py` falls back automatically to the NVIDIA cloud endpoint (`integrate.api.nvidia.com`) using the same model. This ensures the agent is always powered by Nemotron regardless of PC availability.
+
+### How Cursor Was Used
+
+Cursor was used as the IDE for code navigation and editing throughout development. The primary AI assistance for this project came through Claude Code (Anthropic Claude Agent SDK), which was used for the agent.py rewrite, zetaris_client.py authoring, and deployment configuration. All architecture decisions and clinical logic were designed and reviewed by the developer.
+
+### Pre-Existing Components
+
+RofehAI existed before this hackathon as a space medicine AI concept and early-stage codebase. The following components were pre-existing and are not hackathon work:
+
+- The core domain registry architecture (`backend/app/domains/`)
+- The synthetic data generator (`backend/app/data/synthetic.py`)
+- The FastAPI service skeleton, authentication, and frontend dashboard
+- The deployment infrastructure (VPS, Docker Compose, Caddy, domain names)
+- The concept document and draft patent application underlying the architecture
+
+**Work done for this hackathon (October 2026):**
+
+- `backend/app/core/agent.py` — complete rewrite to remove Anthropic Claude and integrate Meterless Nightshift + NVIDIA Nemotron (commit `baa933d`)
+- `backend/app/data/zetaris_client.py` — new file, full Zetaris VDL client with honest synthetic fallback (commit `d29c0db`)
+- The 9-slide presentation deck and Zetaris integration whitepaper (linked above)
+
+### Key Commits
+
+| Commit | File | What it does |
+|---|---|---|
+| `baa933d` | `backend/app/core/agent.py` | Replaces Anthropic with Meterless (Nightshift + H-MEM) + NVIDIA Nemotron |
+| `d29c0db` | `backend/app/data/zetaris_client.py` | Adds Zetaris VDL federated query client |

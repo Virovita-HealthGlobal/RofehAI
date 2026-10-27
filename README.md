@@ -563,6 +563,8 @@ Added on top of the initial reference implementation, still well short of
 | **Slide deck** | https://claude.ai/artifact/Ltb73x72tm3YSdKBKw9Kke |
 | **Whitepaper (Zetaris integration)** | https://claude.ai/artifact/T1YcN2KcGPtATo8orVoKZy |
 
+| **Whitepaper PDF (Google Drive)** | https://drive.google.com/file/d/1qIdpRHWDg_ndVRbub4PzmAXoLA3dgSHn/view?usp=sharing |
+
 ### Sponsor Technology Integration
 
 RofehAI was extended for the hackathon using all three sponsor technology layers:

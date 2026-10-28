@@ -248,6 +248,22 @@ def _execute_tool(name: str, tool_input: dict, crew_id: str | None, fetched: _Fe
     raise AgentError(f"unknown tool '{name}'")
 
 
+def _derive_tone(crew_id: str | None, fetched: _FetchedData) -> str:
+    """The opening sentence is a statement about the data, so it is derived from
+    the data the code actually fetched -- never from the model's own choice.
+    (A live bug had the model pick "all nominal" for a crew member with two
+    elevated domains because it composed without fetching anything.)
+    Same elevation rule as the trajectory model: risk > 50% and rising."""
+    risks = [r for (c, _d), r in fetched.risks.items() if crew_id is None or c == crew_id]
+    if not risks:
+        return "insufficient_data"
+    if any((not r.is_fallback) and r.current_risk > 0.5 and r.risk_delta_30d > 0 for r in risks):
+        return "one_or_more_elevated"
+    if any(r.is_fallback for r in risks):
+        return "insufficient_data"
+    return "all_nominal"
+
+
 def _compose_final_answer(
     crew_id: str | None, tool_input: dict, fetched: _FetchedData, conversation_id: str | None = None, lang: str = "en"
 ) -> tuple[str, list[AgentSource]]:
@@ -272,9 +288,7 @@ def _compose_final_answer(
             return f"(Recalling the previous answer in this conversation.)\n\n{most_recent}", []
         # Nothing to recall yet -- fall through to the normal insufficient-data path below.
 
-    tone = tool_input.get("opening_tone")
-    if tone not in OPENING_TONES:
-        tone = "insufficient_data"
+    tone = _derive_tone(crew_id, fetched)  # model's opening_tone is deliberately ignored
     lines = [i18n.translate(i18n.OPENING_TONES_I18N.get(tone, {}), lang, OPENING_TONES[tone])]
     sources: list[AgentSource] = []
     from app.core import db as _db  # local import: avoids a module-level circular import (see recall block above)
@@ -668,6 +682,19 @@ def run_agent(
         compose_call = next((c for c in calls if c["name"] == "compose_answer"), None)
         if compose_call:
             used_recall = bool(compose_call["input"].get("recall_prior_answer"))
+            if crew_id and not used_recall and not any(c == crew_id for (c, _d) in fetched.risks):
+                # The model tried to answer without looking at any data (e.g. a vague
+                # follow-up). Never answer from nothing: fetch every active domain.
+                auto_sections = []
+                for d in active_domains():
+                    try:
+                        _execute_tool("get_risk", {"domain_id": d.id}, crew_id, fetched, lang=lang)
+                        _execute_tool("get_countermeasure", {"domain_id": d.id}, crew_id, fetched, lang=lang)
+                        tool_calls_made += 2
+                        auto_sections.append({"domain_id": d.id, "include_countermeasure": True})
+                    except (AgentError, KeyError, TypeError, ValueError):
+                        continue
+                compose_call["input"]["sections"] = auto_sections
             answer, sources = _compose_final_answer(crew_id, compose_call["input"], fetched, conversation_id, lang=lang)
             break
     else:

@@ -301,6 +301,34 @@
     window.speechSynthesis.speak(utter);
   }
 
+  // Render the agent's limited markdown (**bold**, _italic_, ### headings) as real
+  // elements. Built with createElement/textContent only -- never innerHTML -- so
+  // nothing inside an answer can inject markup.
+  function renderChatText(el, text) {
+    const lines = String(text).split("\n");
+    lines.forEach((rawLine, i) => {
+      let line = rawLine;
+      let heading = false;
+      if (/^###\s+/.test(line)) { heading = true; line = line.replace(/^###\s+/, ""); }
+      const target = heading ? document.createElement("strong") : el;
+      const re = /(\*\*[^*]+\*\*|(?<![A-Za-z0-9])_[^_]+_(?![A-Za-z0-9]))/g;
+      let last = 0;
+      let m;
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > last) target.appendChild(document.createTextNode(line.slice(last, m.index)));
+        const tok = m[0];
+        const isBold = tok.startsWith("**");
+        const node = document.createElement(isBold ? "strong" : "em");
+        node.textContent = isBold ? tok.slice(2, -2) : tok.slice(1, -1);
+        target.appendChild(node);
+        last = m.index + tok.length;
+      }
+      if (last < line.length) target.appendChild(document.createTextNode(line.slice(last)));
+      if (heading) el.appendChild(target);
+      if (i < lines.length - 1) el.appendChild(document.createTextNode("\n"));
+    });
+  }
+
   function appendChatMessage(role, text, logId = "chat-log") {
     const log = document.getElementById(logId);
     if (!log) return;
@@ -309,7 +337,7 @@
       role === "user"
         ? "align-self:flex-end; max-width:80%; background:var(--accent); color:#0A1020; padding:10px 12px; border-radius:10px 10px 2px 10px; font-size:13px; white-space:pre-wrap;"
         : "align-self:flex-start; max-width:85%; background:var(--surface-2); border:1px solid var(--border); padding:10px 12px; border-radius:10px 10px 10px 2px; font-size:13px; white-space:pre-wrap; line-height:1.5;";
-    bubble.textContent = text;
+    renderChatText(bubble, text);
     log.appendChild(bubble);
     log.scrollTop = log.scrollHeight;
     if (role === "agent") speakAloud(text);

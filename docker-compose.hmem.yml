@@ -1,0 +1,20 @@
+# Adds the H-MEM memory service. Use together with the main file:
+#   docker compose -f docker-compose.yml -f docker-compose.hmem.yml up -d --build
+services:
+  hmem:
+    build: ./engines/hmem
+    restart: unless-stopped
+    environment:
+      HMEM_DIR: /data
+      HMEM_TOKEN: ${HMEM_TOKEN:-}
+    volumes:
+      - hmem_data:/data
+  backend:
+    depends_on:
+      - hmem
+    environment:
+      HMEM_URL: http://hmem:8910
+      HMEM_TOKEN: ${HMEM_TOKEN:-}
+      NIGHTSHIFT_MODEL: ${NIGHTSHIFT_MODEL:-meterless/fast}
+volumes:
+  hmem_data:

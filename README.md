@@ -79,12 +79,14 @@ Note: the frontend is configured to talk to `https://api.rofehai.com/api` by def
 
 ## Briefing agent (`POST /api/agent/ask`)
 
-An LLM (Claude) that reasons across a crew member's active health domains
+An LLM (NVIDIA Nemotron, served through Meterless Nightshift) that reasons across a crew member's active health domains
 and produces a single, cited briefing — instead of clicking through
 separate risk cards one at a time. It has genuine multi-step tool use
 (it decides which domains to check) and persistent memory (a
 `conversation_id` lets a follow-up question like "did the countermeasure
-help?" reference what was discussed before, without re-stating context).
+help?" reference what was discussed before, without re-stating context;
+and the Meterless H-MEM engine remembers each crew member's earlier
+briefings across separate sessions — see the Open Agent Hackathon section).
 
 Two request shapes:
 - **Single crew member**: `{"crew_id": "crew-01", "question": "..."}` —
@@ -107,12 +109,13 @@ the actual sentences deterministically. See the module docstring in
 (fabricated domains, invalid tone injection, and a real end-to-end
 persistent-memory round trip are all covered).
 
-**Requires `ANTHROPIC_API_KEY`** (see `.env.example`) — without it, this
-one endpoint returns 503; everything else in RofehAI runs fine without
-it.
+**Requires a model provider** — Meterless Nightshift (`NIGHTSHIFT_BASE_URL`,
+`NIGHTSHIFT_API_KEY`) as the primary provider, with `NVIDIA_API_KEY` as an
+automatic fallback (see `.env.example`). With neither reachable, this one
+endpoint returns 503; everything else in RofehAI runs fine without it.
 
-**Cost/abuse controls**, since every call spends real money against your
-Anthropic account:
+**Cost/abuse controls**, since every call spends real model-provider quota
+(NVIDIA / Nightshift):
 - A global daily call cap (`ROFEHAI_AGENT_DAILY_LIMIT`, default 100) —
   once reached, the endpoint returns 429 until the next day. This is
   still a blunt instrument (global, not per-user) even though real
@@ -567,21 +570,25 @@ Added on top of the initial reference implementation, still well short of
 
 ### Sponsor Technology Integration
 
-RofehAI was extended for the hackathon using all three sponsor technology layers:
+RofehAI was extended for the hackathon using all three sponsor layers. Everything below describes what is running at https://app.rofehai.com.
 
-**DATA — Zetaris** (`backend/app/data/zetaris_client.py` · commit `d29c0db`)
+**DATA — Zetaris** (`backend/app/data/zetaris_client.py`, `backend/app/core/seeding.py`, the Zetaris integration doc in this repo)
 
-Zetaris is the federated data layer. The `zetaris_client.py` module executes SQL queries against the Zetaris Virtual Data Layer (VDL) — pushing computation to the source rather than moving raw records. The agent's `get_risk` tool calls `query_crew_observations()`, which issues a `POST /api/v1/query` to the configured Zetaris endpoint.
+Zetaris AI Data Gateway runs locally in Docker on the developer's machine. The mission observations are registered there as a File Source (`ROFEHAI.mission_observations`: `crew_id, mission_day, metric, value, recorded_at`). The backend's `zetaris_client.py` sends SQL to Zetaris's SQL-editor API (`/api/proxy/sql-editor/sqls/run-stream`, bearer key plus organisation header) through a tunnel, and `seeding.ensure_seeded` loads each crew member's observations from Zetaris the first time they are needed and stores them in the app's database. The dashboard badge reads "live data — Zetaris". If Zetaris is unreachable (for example the laptop is off), the app falls back to its built-in generated data, and says so. The data itself is synthetic: Zetaris serves it, it does not make it real. The design was shaped by mentor feedback (Saketh, Open Agent Hackathon) to be explicit about what is real and what is synthetic.
 
-When `ZETARIS_ENDPOINT` and `ZETARIS_API_KEY` are set in the environment, the client runs live VDL federation. When they are not set (demo mode), the client falls back to synthetic data and explicitly tells the user so — the disclaimer is surfaced in the agent's response, not hidden. This design was introduced following mentor feedback (Saketh, Open Agent Hackathon) to ensure the demo is honest about what is real vs. synthetic.
+**BUILD — Meterless H-MEM engine** (`engines/hmem/`, `backend/app/core/hmem_client.py`, `backend/app/core/agent.py` → `_apply_hmem`)
 
-**BUILD — Meterless Nightshift + H-MEM** (`backend/app/core/agent.py` · commit `baa933d`)
+H-MEM (persistent, tiered, auditable memory) is integrated as a working feature of the briefing agent:
 
-Meterless Nightshift runs locally on a Windows PC (port 8088), exposed to the VPS via ngrok static domain `update-banish-decent.ngrok-free.dev`. The agent calls Nightshift's OpenAI-compatible API (`/v1/chat/completions`). H-MEM (Meterless persistent memory) retains clinical context across sessions — the agent passes a `session_id` to preserve briefing continuity across interactions for the same crew member.
+- `engines/hmem/reference/` is Meterless's open-source H-MEM reference implementation, vendored unmodified (Apache-2.0, source: github.com/Meterless/Meterless, `engines/hmem`). It runs as its own service (`hmem`, Docker) with state persisted to a volume (`state.json` plus an append-only `ledger.jsonl`).
+- After every per-crew-member briefing the agent **remembers** that person's current risk per domain. In a **later, separate session** it **recalls** those memories through H-MEM's hybrid retrieval and adds a "Since the last briefing (H-MEM memory)" block to the answer, for example `SANS: 82% at 2026-10-28 14:02 UTC -> 90% now (+8 pts)`.
+- Safety design is unchanged: memory text is assembled by code from real fetched data, never from model-written text; memories are tagged per crew member and never shown for another crew member; if the memory service is down the agent still answers without the block.
+- **Evidence:** Meterless's own conformance suite passes against the vendored engine (13/13, `engines/hmem/CONFORMANCE.txt`); `backend/tests/test_agent_hmem_standalone.py` runs the real engine over HTTP (session 1 stores, a new session recalls and shows the change, crew isolation holds, graceful behaviour when the service is down). The engine's trust ledger records every create/read (`GET /ledger` on the `hmem` service).
+- Not used yet: mining, dreaming, sleep cycle and conflict resolution exist in the engine but are not wired into RofehAI.
 
-**POWER — NVIDIA Nemotron** (via Meterless Nightshift · `agent.py` commit `baa933d`)
+**POWER — Meterless Nightshift + NVIDIA Nemotron** (`backend/app/core/agent.py`)
 
-The model served by Meterless Nightshift is `nvidia/llama-3.1-nemotron-70b-instruct`. When the local Nightshift PC is offline, `agent.py` falls back automatically to the NVIDIA cloud endpoint (`integrate.api.nvidia.com`) using the same model. This ensures the agent is always powered by Nemotron regardless of PC availability.
+The briefing agent calls Meterless Nightshift as its **primary** model provider, through Nightshift's OpenAI-compatible runtime (`POST /v1/chat/completions`, bearer token, `meterless-app` and `meterless-scope` headers, model `meterless/fast`). Nightshift runs on the developer's machine and is reached by the server through a tunnel; the NVIDIA key lives inside Nightshift's Providers tab, not in this app. In live runs Nightshift routed the agent's requests to NVIDIA Nemotron models (`nvidia/nemotron-3.5-lightning-30b-a3b` and `nvidia/nemotron-3-ultra-550b-a55b`, as reported in the runtime's responses). If Nightshift is unreachable (for example the machine is offline), the agent automatically falls back to the NVIDIA cloud API with `nvidia/nemotron-3-ultra-550b-a55b`, so the feature keeps working.
 
 ### How Cursor Was Used
 
@@ -594,18 +601,14 @@ RofehAI existed before this hackathon as a space medicine AI concept and early-s
 - The core domain registry architecture (`backend/app/domains/`)
 - The synthetic data generator (`backend/app/data/synthetic.py`)
 - The FastAPI service skeleton, authentication, and frontend dashboard
-- The deployment infrastructure (VPS, Docker Compose, Caddy, domain names)
+- The deployment infrastructure (VPS, Docker Compose, nginx/Certbot, domain names)
 - The concept document and draft patent application underlying the architecture
 
 **Work done for this hackathon (October 2026):**
 
-- `backend/app/core/agent.py` — complete rewrite to remove Anthropic Claude and integrate Meterless Nightshift + NVIDIA Nemotron (commit `baa933d`)
-- `backend/app/data/zetaris_client.py` — new file, full Zetaris VDL client with honest synthetic fallback (commit `d29c0db`)
-- The 9-slide presentation deck and Zetaris integration whitepaper (linked above)
+- `backend/app/data/zetaris_client.py`, `backend/app/core/seeding.py` and the Zetaris data source/integration doc — live data layer with an honest synthetic fallback.
+- `backend/app/core/agent.py` — model transport moved from Anthropic to Meterless Nightshift (primary) with NVIDIA Nemotron fallback, plus H-MEM cross-session memory.
+- `engines/hmem/` and `backend/app/core/hmem_client.py` — the H-MEM engine service and client.
+- The 9-slide presentation deck and Zetaris integration whitepaper (linked above).
 
-### Key Commits
-
-| Commit | File | What it does |
-|---|---|---|
-| `baa933d` | `backend/app/core/agent.py` | Replaces Anthropic with Meterless (Nightshift + H-MEM) + NVIDIA Nemotron |
-| `d29c0db` | `backend/app/data/zetaris_client.py` | Adds Zetaris VDL federated query client |
+**Post-submission update (28 October 2026):** the hackathon submission was made on 27 October. After reviewing the Participant Setup Guide, the following were completed *after* that submission and are therefore on the `post-deadline-fixes` branch and not in the submitted `main`: the Meterless H-MEM engine integration (`engines/hmem/`, `hmem_client.py`, `_apply_hmem`), wiring Meterless Nightshift as the agent's primary provider with the Meterless runtime headers, and the README corrections above. The submitted version described these integrations more broadly than the code at that commit supported; this branch brings the code in line with the description.

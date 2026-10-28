@@ -72,7 +72,7 @@ def query_crew_observations(crew_id: str, up_to_day: int | None = None):
                 f"{ZETARIS_ENDPOINT}/api/proxy/sql-editor/sqls/run-stream",
                 json={"sql": sql, "queryId": str(_uuid.uuid4()), "chunkSize": 1000, "source": "SqlEditor"},
                 headers=headers,
-                timeout=30.0,
+                timeout=120.0,
             )
             resp.raise_for_status()
             lines = [l.strip() for l in resp.text.strip().splitlines() if l.strip()]

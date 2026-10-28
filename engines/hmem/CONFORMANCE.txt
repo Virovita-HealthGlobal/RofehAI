@@ -1,0 +1,4 @@
+  dream-boundary
+    PASS db-001 dream proposals never materialize before approval; approval creates a long_term record with lineage
+
+  13/13 checks passed

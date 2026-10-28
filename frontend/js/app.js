@@ -236,7 +236,7 @@
       <div class="panel chat-panel" style="grid-column: 1 / -1;">
         <div class="panel-title">Ask the briefing agent</div>
         <div class="narrative" style="margin-top:0; padding-top:0; border-top:none;">
-          Reasons across this crew member's active health domains using real data — never fabricates clinical text; every sentence is sourced from an actual risk or countermeasure lookup.
+          Reasons across this crew member's active health domains using the data in Zetaris — never fabricates clinical text; every sentence is sourced from an actual risk or countermeasure lookup.
         </div>
         <div id="chat-log" style="margin-top:12px; display:flex; flex-direction:column; gap:10px; max-height:340px; overflow-y:auto;"></div>
         <form id="chat-form" style="display:flex; gap:8px; margin-top:12px;">
